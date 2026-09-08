@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// CRSC club rules.
+//
+// This is a community app for a casual sports club: anyone with the link can
+// read the lists and add/edit sign-ups (the same trust level as the public
+// Google Sheet the club used before, but with structure and history).
+//
+// Basic guardrails:
+//  - signup documents must have the expected shape and small field sizes
+//  - events and config can be written by anyone with the link; the exec PIN
+//    in the app is a convenience gate, not cryptographic security. If the
+//    club ever needs hard security, add Firebase Auth + per-exec accounts.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /config/main {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if true;
+
+      match /signups/{signupId} {
+        allow read: if true;
+        allow delete: if true;
+        allow create, update: if
+          request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && (!('insta' in request.resource.data) || request.resource.data.insta.size() <= 60)
+          && (!('photo' in request.resource.data) || request.resource.data.photo.size() <= 60000);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
