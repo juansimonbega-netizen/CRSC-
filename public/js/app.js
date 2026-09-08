@@ -161,12 +161,21 @@ function isEventOpen(ev) {
   return ev.status === 'open' && !isPastEvent(ev);
 }
 
+/* Season Battle Pass (volleyball only): '4h' | '2h' | null, set by execs
+ * on the player's registry entry. */
+function playerPass(deviceId) {
+  return (deviceId && (state.players || {})[deviceId]?.battlePass) || null;
+}
+
 /*
  * Price for a set of lists (one person, one event), applying bundles:
  * if a bundle exists for a sport and the person plays that sport in 2+
  * time slots, the bundle price replaces the per-slot prices for that sport.
+ * A Battle Pass zeroes volleyball: '4h' covers everything, '2h' covers the
+ * earliest slot and any extra volleyball is charged per list (no bundle) —
+ * this must stay consistent with coveredSignupIds below.
  */
-function computePrice(event, listIds, method) {
+function computePrice(event, listIds, method, pass = null) {
   const key = method === 'cash' ? 'priceC' : 'priceE';
   const bySport = {};
   let total = 0;
@@ -177,6 +186,19 @@ function computePrice(event, listIds, method) {
     (bySport[l.sport] = bySport[l.sport] || []).push(l);
   }
   for (const [sport, lists] of Object.entries(bySport)) {
+    if (sport === 'volleyball' && pass) {
+      const sorted = [...lists].sort((a, b) => (a.sessionId || '').localeCompare(b.sessionId || ''));
+      sorted.forEach((l, i) => {
+        const covered = pass === '4h' || i === 0;
+        const price = covered ? 0 : (l[key] ?? 0);
+        total += price;
+        parts.push({
+          label: `${SPORTS[sport].label} — ${l.label}${covered ? ' · ' + t('battlePass') : ''}`,
+          price,
+        });
+      });
+      continue;
+    }
     const sessions = new Set(lists.map(l => l.sessionId));
     const bundle = (event.bundles || []).find(b => b.sport === sport);
     if (bundle && sessions.size >= 2) {
@@ -193,6 +215,27 @@ function computePrice(event, listIds, method) {
     }
   }
   return { total, parts };
+}
+
+/*
+ * Which signups of an event are covered by their owner's Battle Pass.
+ * Mirrors the computePrice pass rule: '4h' covers every volleyball signup,
+ * '2h' covers the one in the earliest slot.
+ */
+function coveredSignupIds(ev) {
+  const set = new Set();
+  const byPerson = {};
+  for (const su of eventSignups(ev.id)) (byPerson[personKey(su)] = byPerson[personKey(su)] || []).push(su);
+  for (const sus of Object.values(byPerson)) {
+    const pass = playerPass(sus[0].deviceId);
+    if (!pass) continue;
+    const volley = sus
+      .filter(s => listById(ev, s.listId)?.sport === 'volleyball')
+      .sort((a, b) => (listById(ev, a.listId)?.sessionId || '').localeCompare(listById(ev, b.listId)?.sessionId || ''));
+    if (pass === '4h') volley.forEach(s => set.add(s.id));
+    else if (volley[0]) set.add(volley[0].id);
+  }
+  return set;
 }
 
 /* One-line price recap for an event: each distinct sport price shown once. */
@@ -219,15 +262,21 @@ function personKey(s) {
 }
 
 function personTotals(ev) {
+  const covered = coveredSignupIds(ev);
   const persons = {};
   for (const su of eventSignups(ev.id)) {
     const k = personKey(su);
-    if (!persons[k]) persons[k] = { name: su.name, insta: su.insta, method: su.method, signups: [] };
+    if (!persons[k]) persons[k] = { name: su.name, insta: su.insta, method: su.method, deviceId: su.deviceId, signups: [] };
     persons[k].signups.push(su);
   }
   return Object.values(persons).map(p => {
-    const { total } = computePrice(ev, p.signups.map(x => x.listId), p.method);
-    return { ...p, total, paid: p.signups.every(x => x.paid), checkedIn: p.signups.some(x => x.checkedIn) };
+    const pass = playerPass(p.deviceId);
+    const { total } = computePrice(ev, p.signups.map(x => x.listId), p.method, pass);
+    return {
+      ...p, total, pass,
+      paid: p.signups.every(x => x.paid || covered.has(x.id)),
+      checkedIn: p.signups.some(x => x.checkedIn),
+    };
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -248,8 +297,9 @@ function payLineFor(lang, method, total) {
 
 async function sendConfirmationEmail(ev, profile, listIds, method) {
   const lang = getLang();
+  const myPass = playerPass(DEVICE);
   const allMine = [...new Set([...mySignups(ev.id).map(m => m.listId), ...listIds])];
-  const { total } = computePrice(ev, allMine, method);
+  const { total } = computePrice(ev, allMine, method, myPass);
   const lists = allMine.map(id => {
     const l = listById(ev, id);
     const sess = l ? sessionById(ev, l.sessionId) : null;
@@ -259,7 +309,7 @@ async function sendConfirmationEmail(ev, profile, listIds, method) {
     name: profile.name,
     date: fmtDateLang(ev.date, lang),
     lists,
-    payLine: payLineFor(lang, method, total),
+    payLine: total === 0 && myPass ? tLang(lang, 'battlePassCovered') : payLineFor(lang, method, total),
     late: state.settings.lateFeeNote || '',
     location: ev.location || state.settings.location || '',
     club: state.settings.clubFullName || 'CRSC',
@@ -299,16 +349,18 @@ async function runPaymentReminders() {
       const signups = state.signups[ev.id];
       if (!signups) continue; // not loaded yet; a later pass will handle it
       // one reminder per person, bundle-aware total
+      const covered = coveredSignupIds(ev);
       const persons = {};
       for (const su of signups) {
-        if (su.paid || !su.email || su.paymentReminderSentAt) continue;
+        if (su.paid || covered.has(su.id) || !su.email || su.paymentReminderSentAt) continue;
         const k = personKey(su);
         (persons[k] = persons[k] || []).push(su);
       }
       for (const sus of Object.values(persons)) {
         const su = sus[0];
         const lang = su.lang === 'fr' ? 'fr' : 'en';
-        const { total } = computePrice(ev, sus.map(x => x.listId), su.method);
+        const { total } = computePrice(ev, sus.map(x => x.listId), su.method, playerPass(su.deviceId));
+        if (total === 0) continue;
         if (live) {
           // claim before sending so a second open tab can't double-send
           await Promise.all(sus.map(x => store.updateSignup(ev.id, x.id, { paymentReminderSentAt: Date.now() })));
@@ -375,7 +427,8 @@ async function notifyPromotion(ev, promo) {
       return;
     }
     const lang = cand.lang === 'fr' ? 'fr' : 'en';
-    const { total } = computePrice(ev, [list.id], cand.method);
+    const pass = playerPass(cand.deviceId);
+    const { total } = computePrice(ev, [list.id], cand.method, pass);
     await sendMail({
       to: cand.email,
       subject: tLang(lang, 'emailPromoSubject', { date: fmtDateLang(ev.date, lang) }),
@@ -384,7 +437,7 @@ async function notifyPromotion(ev, promo) {
         date: fmtDateLang(ev.date, lang),
         list: `${SPORTS[list.sport]?.label || list.sport} — ${list.label}`,
         session: sess ? sess.label : '',
-        payLine: payLineFor(lang, cand.method, total),
+        payLine: total === 0 && pass ? tLang(lang, 'battlePassCovered') : payLineFor(lang, cand.method, total),
         location: ev.location || state.settings.location || '',
         club: state.settings.clubFullName || 'CRSC',
       }),
@@ -576,9 +629,10 @@ function myGamesHtml() {
   const items = [];
   for (const ev of state.events) {
     if (isPastEvent(ev)) continue;
+    const covered = coveredSignupIds(ev);
     for (const m of mySignups(ev.id)) {
       const l = listById(ev, m.listId);
-      items.push({ ev, m, l });
+      items.push({ ev, m, l, covered: covered.has(m.id) });
     }
   }
   if (!items.length) return '';
@@ -586,11 +640,11 @@ function myGamesHtml() {
   return `
     <h2 class="section-title">${esc(t('yourGames'))}</h2>
     <div class="card my-games">
-      ${items.map(({ ev, m, l }) => `
+      ${items.map(({ ev, m, l, covered }) => `
         <a class="my-game" href="#/event/${esc(ev.id)}">
           <span class="my-game-date">${esc(fmtDateShort(ev.date))}</span>
           <span class="grow">${esc(SPORTS[l?.sport]?.label || '')} — ${esc(l?.label || '?')}</span>
-          ${m.paid ? `<span class="chip chip-paid">${esc(t('paid'))}</span>` : `<span class="chip chip-unpaid">${esc(m.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`}
+          ${paymentChip(m, covered)}
         </a>`).join('')}
     </div>`;
 }
@@ -661,6 +715,7 @@ function renderHome() {
       <h3>${esc(t('importantInfo'))}</h3>
       <p><strong>${esc(t('locationLbl'))}</strong> ${esc(s.location || '')}</p>
       <p><strong>${esc(t('paymentLbl'))}</strong> ${esc(t('paymentLine', { email: s.etransferEmail || '' }))}</p>
+      ${s.battlePassNote ? `<p><strong>${esc(t('battlePass'))}:</strong> ${esc(s.battlePassNote)}</p>` : ''}
       <ul>${(s.policies || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
       <p class="late-fee">${esc(s.lateFeeNote || '')}</p>
     </footer>`;
@@ -699,12 +754,13 @@ async function openSeason() {
 /* Event view                                                          */
 /* ================================================================== */
 
-function paymentChip(s) {
+function paymentChip(s, covered = false) {
+  if (covered) return `<span class="chip chip-pass">${esc(t('battlePass'))}</span>`;
   if (s.paid) return `<span class="chip chip-paid">${esc(t('paid'))}</span>`;
   return `<span class="chip chip-unpaid">${esc(s.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`;
 }
 
-function entryRow(ev, s, { waitlistPos = null, exec = false } = {}) {
+function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } = {}) {
   const mine = s.deviceId === DEVICE;
   return `
     <div class="entry ${mine ? 'entry-mine' : ''} ${exec ? 'entry-clickable' : ''}" ${exec ? `data-signup="${esc(s.id)}"` : ''}>
@@ -714,18 +770,19 @@ function entryRow(ev, s, { waitlistPos = null, exec = false } = {}) {
         ${s.insta ? `<small>@${esc(s.insta)}</small>` : ''}
       </div>
       ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
-      ${exec ? `${s.checkedIn ? `<span class="chip chip-in">${esc(t('here'))}</span>` : ''}${paymentChip(s)}` : (mine ? paymentChip(s) : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
+      ${exec || mine ? `${exec && s.checkedIn ? `<span class="chip chip-in">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (covered ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
       ${mine && !exec ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
 }
 
 /* Confirmed entries, grouped into teams when the list has them. */
-function confirmedHtml(ev, l, confirmed, exec) {
+function confirmedHtml(ev, l, confirmed, exec, coveredSet) {
   if (!confirmed.length) return `<div class="empty-list">${esc(t('beFirst'))}</div>`;
+  const row = e => entryRow(ev, e, { exec, covered: coveredSet.has(e.id) });
   const teamCount = l.teamCount || 0;
   const anyAssigned = confirmed.some(e => e.team);
   if (!teamCount || !anyAssigned) {
-    return confirmed.map(e => entryRow(ev, e, { exec })).join('')
+    return confirmed.map(row).join('')
       + (teamCount && !anyAssigned ? `<div class="hint team-hint">${esc(t('noTeamYet'))}</div>` : '');
   }
   let html = '';
@@ -733,12 +790,12 @@ function confirmedHtml(ev, l, confirmed, exec) {
     const members = confirmed.filter(e => e.team === n);
     if (!members.length) continue;
     html += `<div class="team-divider">${esc(t('team', { n }))}</div>`;
-    html += members.map(e => entryRow(ev, e, { exec })).join('');
+    html += members.map(row).join('');
   }
   const rest = confirmed.filter(e => !e.team || e.team > teamCount);
   if (rest.length) {
     html += `<div class="team-divider team-unassigned">${esc(t('unassigned'))}</div>`;
-    html += rest.map(e => entryRow(ev, e, { exec })).join('');
+    html += rest.map(row).join('');
   }
   return html;
 }
@@ -748,6 +805,7 @@ function renderEvent(ev) {
   const s = state.settings;
   const mine = mySignups(ev.id);
   const isOpen = isEventOpen(ev);
+  const coveredSet = coveredSignupIds(ev);
 
   const sessionsHtml = (ev.sessions || []).map(sess => {
     const lists = (ev.lists || []).filter(l => l.sessionId === sess.id);
@@ -774,8 +832,8 @@ function renderEvent(ev) {
                   <span class="cap-text">${confirmed.length}/${l.cap || 0}${full ? ` · ${esc(t('full'))}` : ` · ${esc(t('spotsLeft', { n: spotsLeft }))}`}</span>
                 </div>
                 <div class="entries">
-                  ${confirmedHtml(ev, l, confirmed, exec)}
-                  ${waitlist.length ? `<div class="wl-divider">${esc(t('waitlist'))}</div>${waitlist.map((e, i) => entryRow(ev, e, { waitlistPos: i + 1, exec })).join('')}` : ''}
+                  ${confirmedHtml(ev, l, confirmed, exec, coveredSet)}
+                  ${waitlist.length ? `<div class="wl-divider">${esc(t('waitlist'))}</div>${waitlist.map((e, i) => entryRow(ev, e, { waitlistPos: i + 1, exec, covered: coveredSet.has(e.id) })).join('')}` : ''}
                 </div>
                 ${isOpen && !iAmIn ? `<button class="btn ${full ? 'btn-ghost' : 'btn-primary'} btn-join" data-join="${esc(l.id)}">${esc(full ? t('joinWaitlist') : t('join'))}</button>` : ''}
                 ${exec ? `
@@ -813,7 +871,7 @@ function renderEvent(ev) {
             const sess = l ? sessionById(ev, l.sessionId) : null;
             return `<span class="chip chip-mine">${esc(SPORTS[l?.sport]?.label || '')} ${esc(l ? l.label : '?')}${sess ? ' · ' + esc(sess.label) : ''}</span>`;
           }).join('')}
-          ${mine.some(m => !m.paid) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : `<span class="chip chip-paid">${esc(t('allPaid'))}</span>`}
+          ${mine.some(m => !m.paid && !coveredSet.has(m.id)) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : `<span class="chip ${mine.some(m => coveredSet.has(m.id)) ? 'chip-pass' : 'chip-paid'}">${esc(mine.every(m => coveredSet.has(m.id)) ? t('battlePass') : t('allPaid'))}</span>`}
         </div>` : ''}
       ${exec ? `
         <div class="row gap wrap exec-toolbar">
@@ -980,15 +1038,17 @@ function openJoinSheet(ev, preselectedListId) {
 
   function refreshPrice() {
     const method = $('input[name="paym"]:checked', ov).value;
+    const myPass = playerPass(DEVICE);
     const chosen = $$('input[data-list]:checked', ov).map(c => c.dataset.list);
     const already = [...myIds];
-    const { total: totalAll } = computePrice(ev, [...chosen, ...already], method);
-    const { total: totalOld } = computePrice(ev, already, method);
+    const { total: totalAll } = computePrice(ev, [...chosen, ...already], method, myPass);
+    const { total: totalOld } = computePrice(ev, already, method, myPass);
     const due = totalAll - totalOld;
-    const { parts } = computePrice(ev, chosen.length ? [...chosen, ...already] : [], method);
+    const { parts } = computePrice(ev, chosen.length ? [...chosen, ...already] : [], method, myPass);
     $('#join-price', ov).innerHTML = chosen.length
       ? `${parts.map(pt => `<div class="price-line"><span>${esc(pt.label)}</span><span>${fmtMoney(pt.price)}</span></div>`).join('')}
-         <div class="price-line price-total"><span>${esc(already.length ? t('newTotal') : t('toPay'))}</span><span>${fmtMoney(already.length ? totalAll : due)}</span></div>`
+         <div class="price-line price-total"><span>${esc(already.length ? t('newTotal') : t('toPay'))}</span><span>${fmtMoney(already.length ? totalAll : due)}</span></div>
+         ${(already.length ? totalAll : due) === 0 && myPass ? `<p class="hint">${esc(t('battlePassCovered'))}</p>` : ''}`
       : `<p class="hint">${esc(t('selectOne'))}</p>`;
     $('#join-payinfo', ov).innerHTML = method === 'etransfer'
       ? `<p>${esc(t('etransferTo'))} <strong>${esc(s.etransferEmail)}</strong><br><small>${esc(t('mentionName'))}</small></p>`
@@ -1042,7 +1102,17 @@ function openPayInfoModal(ev, method) {
   const mine = mySignups(ev.id).filter(m => !m.paid);
   const m = method || (mine[0]?.method) || 'etransfer';
   const ids = mySignups(ev.id).map(x => x.listId);
-  const { total } = computePrice(ev, ids, m);
+  const { total } = computePrice(ev, ids, m, playerPass(DEVICE));
+  if (total === 0 && playerPass(DEVICE)) {
+    openModal(`
+      <div class="modal-body">
+        <h2>${esc(t('howToPay'))}</h2>
+        <p class="pay-email">${esc(t('battlePass'))}</p>
+        <p class="hint">${esc(t('battlePassCovered'))}</p>
+        <button class="btn btn-primary wide" data-close>${esc(t('gotIt'))}</button>
+      </div>`);
+    return;
+  }
   openModal(`
     <div class="modal-body">
       <h2>${esc(t('howToPay'))}</h2>
@@ -1130,6 +1200,13 @@ function openPlayerAdminModal(ev, su) {
           }).join('')}
         </div>`;
       })() : ''}
+      ${su.deviceId && su.deviceId !== 'exec-added' ? `
+        <label class="field-label">${esc(t('battlePassLbl'))}</label>
+        <div class="row gap" id="pa-pass">
+          <button class="btn btn-small grow ${!playerPass(su.deviceId) ? 'btn-exec' : 'btn-ghost'}" data-pass="">—</button>
+          <button class="btn btn-small grow ${playerPass(su.deviceId) === '2h' ? 'btn-exec' : 'btn-ghost'}" data-pass="2h">2h</button>
+          <button class="btn btn-small grow ${playerPass(su.deviceId) === '4h' ? 'btn-exec' : 'btn-ghost'}" data-pass="4h">4h</button>
+        </div>` : ''}
       <label class="field-label">${esc(t('moveTo'))}</label>
       <select class="input" id="pa-move">${listsOptions}</select>
       <div class="row gap">
@@ -1157,6 +1234,12 @@ function openPlayerAdminModal(ev, su) {
     su.team = n;
     $$('#pa-teams [data-team]', ov).forEach(x => {
       x.className = `btn btn-small ${(+x.dataset.team || null) === n ? 'btn-exec' : 'btn-ghost'}`;
+    });
+  }));
+  $$('#pa-pass [data-pass]', ov).forEach(b => b.addEventListener('click', async () => {
+    await setBattlePass({ deviceId: su.deviceId, name: su.name }, b.dataset.pass || null);
+    $$('#pa-pass [data-pass]', ov).forEach(x => {
+      x.className = `btn btn-small grow ${x === b ? 'btn-exec' : 'btn-ghost'}`;
     });
   }));
   $('#pa-move', ov).addEventListener('change', async e => {
@@ -1239,16 +1322,27 @@ function allPlayers() {
   for (const [evId, signups] of Object.entries(state.signups)) {
     const ev = state.events.find(e => e.id === evId);
     if (!ev) continue;
+    const covered = coveredSignupIds(ev);
     for (const su of signups) {
       const key = su.deviceId && su.deviceId !== 'exec-added' ? su.deviceId : 'name:' + su.name.toLowerCase();
       if (!byId[key]) byId[key] = { deviceId: key, name: su.name, insta: su.insta, email: su.email || '', phone: su.phone || '', photo: su.photo || '', games: 0, unpaid: 0 };
       byId[key].games++;
-      if (!su.paid) byId[key].unpaid++;
+      if (!su.paid && !covered.has(su.id)) byId[key].unpaid++;
       if (!byId[key].email && su.email) byId[key].email = su.email;
       if (!byId[key].photo && su.photo) byId[key].photo = su.photo;
     }
   }
   return Object.values(byId).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+/* Set/clear a player's Battle Pass (execs only; volleyball season pass). */
+async function setBattlePass(player, type) {
+  await store.savePlayer({
+    deviceId: player.deviceId,
+    name: player.name,
+    battlePass: type || null,
+  });
+  toast(type ? t('battlePassSet', { name: player.name, type: type.toUpperCase() }) : t('battlePassRemoved', { name: player.name }));
 }
 
 function openPlayersModal() {
@@ -1268,7 +1362,7 @@ function openPlayersModal() {
     const players = allPlayers().filter(p =>
       !q || [p.name, p.insta, p.email, p.phone].some(v => (v || '').toLowerCase().includes(q)));
     $('#pl-title', ov).textContent = t('playersTitle', { n: players.length });
-    $('#pl-list', ov).innerHTML = players.map(p => `
+    $('#pl-list', ov).innerHTML = players.map((p, i) => `
       <div class="entry player-row">
         ${avatarHtml(p, 'avatar-sm')}
         <div class="grow entry-name">
@@ -1277,9 +1371,19 @@ function openPlayersModal() {
             ${p.insta ? '@' + esc(p.insta) + ' · ' : ''}${esc(p.email || '')}${p.phone ? ' · ' + esc(p.phone) : ''}
           </small>
         </div>
-        <span class="chip ${p.games ? 'chip-mine' : 'chip-muted'}">${esc(p.games ? t('gamesPlayed', { n: p.games }) : t('neverPlayed'))}</span>
-        ${p.unpaid ? `<span class="chip chip-unpaid">${esc(t('unpaidCount', { n: p.unpaid }))}</span>` : ''}
+        ${p.unpaid ? `<span class="chip chip-unpaid">${esc(t('unpaidCount', { n: p.unpaid }))}</span>` : `<span class="chip ${p.games ? 'chip-mine' : 'chip-muted'}">${esc(p.games ? t('gamesPlayed', { n: p.games }) : t('neverPlayed'))}</span>`}
+        ${p.deviceId.startsWith('name:')
+          ? (p.battlePass ? `<span class="chip chip-pass">${esc(p.battlePass.toUpperCase())}</span>` : '')
+          : `<button class="btn btn-tiny ${p.battlePass ? 'btn-exec' : 'btn-ghost'}" data-pass="${i}" title="${esc(t('battlePassLbl'))}">${esc(p.battlePass ? 'PASS ' + p.battlePass.toUpperCase() : 'PASS')}</button>`}
       </div>`).join('') || `<p class="hint">${esc(t('noMatches'))}</p>`;
+    // Tap the PASS button to cycle: none -> 2h -> 4h -> none.
+    $$('[data-pass]', ov).forEach(b => b.addEventListener('click', async () => {
+      const p = players[+b.dataset.pass];
+      const next = p.battlePass === '2h' ? '4h' : p.battlePass === '4h' ? null : '2h';
+      await setBattlePass(p, next);
+      p.battlePass = next;
+      renderList();
+    }));
   }
   $('#pl-search', ov).addEventListener('input', renderList);
   $('#pl-csv', ov).addEventListener('click', () => {
@@ -1322,19 +1426,20 @@ function openSummaryModal(ev) {
       ${paid.length ? `
         <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
         <div class="summary-list">
-          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span><span class="chip chip-paid">${fmtMoney(p.total)} ✓</span></div>`).join('')}
+          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span>${p.pass && p.total === 0 ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : `<span class="chip chip-paid">${fmtMoney(p.total)} ✓</span>`}</div>`).join('')}
         </div>` : ''}
       <button class="btn btn-primary wide" data-close>${esc(t('close'))}</button>
     </div>`, { wide: true });
 }
 
 function exportCsv(ev) {
+  const covered = coveredSignupIds(ev);
   const rows = [['Name', 'Email', 'Phone', 'Instagram', 'Session', 'List', 'Sport', 'Team', 'Status', 'Payment method', 'Paid', 'Checked in']];
   for (const l of ev.lists || []) {
     const sess = sessionById(ev, l.sessionId);
     const entries = listEntries(ev.id, l.id);
     const { confirmed, waitlist } = splitByCap(entries, l.cap || 0);
-    const row = (su, status) => [su.name, su.email || '', su.phone || '', su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, su.team || '', status, su.method, su.paid ? 'yes' : 'NO', su.checkedIn ? 'yes' : ''];
+    const row = (su, status) => [su.name, su.email || '', su.phone || '', su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, su.team || '', status, su.method, su.paid ? 'yes' : (covered.has(su.id) ? 'BATTLE PASS' : 'NO'), su.checkedIn ? 'yes' : ''];
     for (const su of confirmed) rows.push(row(su, 'confirmed'));
     for (const su of waitlist) rows.push(row(su, 'waitlist'));
   }
@@ -1495,6 +1600,8 @@ function openSettingsModal() {
         <input class="input" id="cs-season" type="date" value="${esc(s.seasonEnd || '')}">
         <label class="field-label">${esc(t('lateFeeLbl'))}</label>
         <input class="input" id="cs-latefee" value="${esc(s.lateFeeNote || '')}">
+        <label class="field-label">${esc(t('battlePassNoteLbl'))}</label>
+        <textarea class="input" id="cs-bpnote" rows="3">${esc(s.battlePassNote || '')}</textarea>
         <label class="field-label">${esc(t('policiesLbl'))}</label>
         <textarea class="input" id="cs-policies" rows="6">${esc((s.policies || []).join('\n'))}</textarea>
       </div>
@@ -1511,6 +1618,7 @@ function openSettingsModal() {
       execPin: $('#cs-pin', ov).value.trim() || '1234',
       seasonEnd: $('#cs-season', ov).value || s.seasonEnd || '',
       lateFeeNote: $('#cs-latefee', ov).value.trim(),
+      battlePassNote: $('#cs-bpnote', ov).value.trim(),
       policies: $('#cs-policies', ov).value.split('\n').map(x => x.trim()).filter(Boolean),
     });
     ov.remove();
@@ -1530,6 +1638,9 @@ async function main() {
   window.addEventListener('hashchange', render);
   const existing = getProfile();
   if (existing) registerPlayer(existing); // keep the directory's "last seen" fresh
+  // Everyone watches the player registry: Battle Pass status must be known
+  // on every device for prices, chips, and reminder emails to be right.
+  store.watchPlayers();
   await store.init(newState => {
     state = newState;
     render();

@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   execPin: '1234',
   seasonEnd: '2026-12-26',
   lateFeeNote: '+5$ late fee if payment is made after the event',
+  battlePassNote: 'Volleyball season pass — 4h (both slots) 135$ instead of 165$ · 2h 75$ instead of 88$. E-transfer the club and an exec activates it on your profile.',
   policies: [
     'For e-Transfer make sure to mention the name of the person(s) you are paying for.',
     'Please note that the host might move your name to the appropriate level.',
@@ -121,7 +122,7 @@ export function saturdaysUntil(endDate) {
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v4';
+const DEMO_KEY = 'crsc-demo-v5';
 
 function demoSeed() {
   const players = {};
@@ -160,6 +161,9 @@ function demoSeed() {
   signups[season[0].id] = seedSignups(season[0], 3, [
     ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
   ], { teamed: true });
+  // Sample Battle Pass holders so the tag is visible in the demo.
+  if (players['demo-rayan']) players['demo-rayan'].battlePass = '4h';
+  if (players['demo-maya']) players['demo-maya'].battlePass = '2h';
 
   return {
     settings: { ...DEFAULT_SETTINGS },

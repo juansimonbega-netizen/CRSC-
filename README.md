@@ -26,6 +26,13 @@ drop-in events (volleyball, basketball, football).
   the teams; only execs can change them. **Volleyball is capped at 4 teams of 7
   players max** (buttons show each team's count and lock when full); basketball
   and football rules can be added the same way once the club decides them.
+- **Battle Pass** (volleyball season pass — 4h 135$ instead of 165$, 2h 75$ instead of 88$):
+  execs activate it on a player from the Players directory (tap PASS to cycle
+  none → 2h → 4h) or from the player's card. Pass holders show a "Battle Pass"
+  tag instead of "unpaid" everywhere, count as paid, are skipped by payment
+  reminders, and a 2h pass covers one volleyball slot per Saturday (playing
+  both slots only charges the extra slot). The offer text on the home page is
+  editable in Club settings.
 - **Payments screen**: who paid, who didn't, expected amount per person (bundle-aware), totals collected and outstanding.
 - **"Open the season"**: one tap creates an event for every remaining Saturday until the season end, copied from the latest event.
 - Every past Saturday is kept automatically as a read-only **week-by-week record** (players, collected, outstanding).

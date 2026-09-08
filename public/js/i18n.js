@@ -63,6 +63,14 @@ const STRINGS = {
   welcomePrivacy: ['Your email is only used for game confirmations and payment reminders from the club.', 'Votre courriel sert uniquement aux confirmations et rappels de paiement du club.'],
   continueBtn: ['Create my profile', 'Créer mon profil'],
 
+  /* battle pass */
+  battlePass: ['Battle Pass', 'Battle Pass'],
+  battlePassLbl: ['Battle Pass (volleyball season)', 'Battle Pass (saison de volleyball)'],
+  battlePassCovered: ['Covered by your Battle Pass — nothing to pay.', 'Couvert par votre Battle Pass — rien à payer.'],
+  battlePassSet: ['{name}: Battle Pass {type} activated', '{name} : Battle Pass {type} activé'],
+  battlePassRemoved: ['{name}: Battle Pass removed', '{name} : Battle Pass retiré'],
+  battlePassNoteLbl: ['Battle Pass offer text', 'Texte de l\'offre Battle Pass'],
+
   /* players directory (exec) */
   playersBtn: ['Players', 'Joueurs'],
   playersTitle: ['All players ({n})', 'Tous les joueurs ({n})'],

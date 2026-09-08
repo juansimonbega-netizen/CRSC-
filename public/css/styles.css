@@ -103,6 +103,7 @@ a { color: var(--orange-dark); }
 .chip-mine { background: var(--green-soft); color: var(--green); }
 .chip-muted { background: #e7e0d0; color: var(--ink-soft); }
 .chip-demo { background: var(--ink); color: var(--bg); letter-spacing: 0.08em; }
+.chip-pass { background: var(--ink); color: #f5b942; letter-spacing: 0.04em; }
 
 /* ------- buttons / inputs ------- */
 .btn {
