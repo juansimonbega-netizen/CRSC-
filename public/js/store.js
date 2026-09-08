@@ -91,9 +91,9 @@ export function makeTemplateEvent(dateStr, title) {
   };
 }
 
-function nextSaturday() {
+export function nextSaturday(offsetWeeks = 0) {
   const d = new Date();
-  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7));
+  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7) + offsetWeeks * 7);
   return d.toISOString().slice(0, 10);
 }
 
@@ -101,30 +101,41 @@ function nextSaturday() {
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v1';
+const DEMO_KEY = 'crsc-demo-v2';
 
 function demoSeed() {
-  const ev = makeTemplateEvent(nextSaturday(), 'Saturday Drop-in');
-  const sampleNames = [
-    ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
-  ];
-  const signups = sampleNames.map(([name, insta], i) => ({
+  const seedSignups = (ev, listIdx, names, { paid = false } = {}) => names.map(([name, insta], i) => ({
     id: uid('su'),
-    listId: ev.lists[0].id,
+    listId: ev.lists[listIdx].id,
     name, insta,
     photo: '',
     deviceId: 'demo-seed',
     method: i % 2 ? 'cash' : 'etransfer',
-    paid: i < 2,
-    checkedIn: false,
+    paid: paid || i < 2,
+    checkedIn: paid,
     order: Date.now() + i,
     createdAt: Date.now() + i,
     addedByExec: false,
   }));
+
+  // This week + next week to choose from, plus last week as a record.
+  const ev1 = makeTemplateEvent(nextSaturday(), 'Saturday Drop-in');
+  const ev2 = makeTemplateEvent(nextSaturday(1), 'Saturday Drop-in');
+  const past = makeTemplateEvent(nextSaturday(-1), 'Saturday Drop-in');
+  past.status = 'closed';
+
   return {
     settings: { ...DEFAULT_SETTINGS },
-    events: [ev],
-    signups: { [ev.id]: signups },
+    events: [past, ev1, ev2],
+    signups: {
+      [ev1.id]: seedSignups(ev1, 0, [
+        ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
+      ]),
+      [ev2.id]: [],
+      [past.id]: seedSignups(past, 3, [
+        ['Giulio', ''], ['Heejin', ''], ['Anthony', ''], ['Cami', ''], ['Deniz', ''],
+      ], { paid: true }),
+    },
   };
 }
 

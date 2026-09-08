@@ -1,5 +1,5 @@
 import {
-  createStore, SPORTS, uid, deviceId, makeTemplateEvent,
+  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday,
 } from './store.js';
 
 /* ================================================================== */
@@ -128,6 +128,19 @@ function mySignups(eventId) {
   return eventSignups(eventId).filter(s => s.deviceId === DEVICE);
 }
 
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/* An event whose Saturday has passed becomes a read-only record automatically. */
+function isPastEvent(ev) {
+  return !!ev.date && ev.date < todayStr();
+}
+
+function isEventOpen(ev) {
+  return ev.status === 'open' && !isPastEvent(ev);
+}
+
 function listById(event, listId) {
   return (event.lists || []).find(l => l.id === listId);
 }
@@ -167,6 +180,25 @@ function computePrice(event, listIds, method) {
     }
   }
   return { total, parts };
+}
+
+/* One-line price recap for an event: each distinct sport price shown once. */
+function pricesSummary(ev) {
+  const seen = new Set();
+  const parts = [];
+  for (const l of ev.lists || []) {
+    const sport = SPORTS[l.sport] || SPORTS.other;
+    const price = `${fmtMoney(l.priceE ?? 0)}${(l.priceC ?? l.priceE) !== l.priceE ? ` (${fmtMoney(l.priceC)} cash)` : ''}`;
+    const key = l.sport + '|' + price;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(`${sport.emoji} ${esc(sport.label)} <strong>${price}</strong>`);
+  }
+  for (const b of ev.bundles || []) {
+    const sport = SPORTS[b.sport] || SPORTS.other;
+    parts.push(`${sport.emoji} both slots <strong>${fmtMoney(b.priceE ?? 0)}</strong>`);
+  }
+  return parts.join(' · ');
 }
 
 /* Expected amount for one person's existing signups (used by exec summary). */
@@ -223,32 +255,52 @@ function renderHeader() {
 /* Home view                                                           */
 /* ================================================================== */
 
-function eventCard(ev) {
+function eventCard(ev, { record = false } = {}) {
   const sports = [...new Set((ev.lists || []).map(l => l.sport))];
   const total = eventSignups(ev.id).length;
   const capTotal = (ev.lists || []).reduce((a, l) => a + (l.cap || 0), 0);
   const mine = mySignups(ev.id);
+  const open = isEventOpen(ev);
+  const soon = ev.date === nextSaturday() || ev.date === todayStr();
+
+  let recordLine = '';
+  if (record) {
+    const people = personTotals(ev);
+    const collected = people.filter(p => p.paid).reduce((a, p) => a + p.total, 0);
+    const outstanding = people.filter(p => !p.paid).reduce((a, p) => a + p.total, 0);
+    recordLine = `<div class="event-record">${people.length} players · <span class="rec-good">${fmtMoney(collected)} collected</span>${outstanding ? ` · <span class="rec-bad">${fmtMoney(outstanding)} unpaid</span>` : ''}</div>`;
+  }
+
   return `
-    <a class="card event-card ${ev.status !== 'open' ? 'event-closed' : ''}" href="#/event/${esc(ev.id)}">
+    <a class="card event-card ${!open ? 'event-closed' : ''}" href="#/event/${esc(ev.id)}">
       <div class="event-card-top">
         <div>
           <div class="event-date">${esc(fmtDate(ev.date))}</div>
           <div class="event-title">${esc(ev.title || '')}</div>
         </div>
-        ${ev.status !== 'open' ? '<span class="chip chip-muted">Closed</span>' : ''}
+        ${!open ? `<span class="chip chip-muted">${isPastEvent(ev) ? 'Past' : 'Closed'}</span>` : (soon ? '<span class="chip chip-soon">This Saturday</span>' : '')}
       </div>
       <div class="event-sports">${sports.map(sp => `<span class="chip" style="--c:${SPORTS[sp]?.color || '#888'}">${SPORTS[sp]?.emoji || ''} ${esc(SPORTS[sp]?.label || sp)}</span>`).join('')}</div>
       <div class="event-meta">
-        <span>${total} signed up${capTotal ? ` · ${capTotal} spots` : ''}</span>
+        <span>${total} signed up${capTotal && open ? ` · ${capTotal} spots` : ''}</span>
         ${mine.length ? `<span class="chip chip-mine">You're in ✓</span>` : ''}
       </div>
+      ${recordLine}
     </a>`;
 }
 
 function renderHome() {
   const exec = isExec();
-  const open = state.events.filter(e => e.status === 'open');
-  const closed = state.events.filter(e => e.status !== 'open');
+  const upcoming = state.events
+    .filter(isEventOpen)
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+  const past = state.events
+    .filter(e => !isEventOpen(e))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  // Keep every week's lists and payments live: watch upcoming Saturdays for
+  // everyone, and recent past weeks for the exec records.
+  upcoming.forEach(e => store.watchEvent(e.id));
+  if (exec) past.slice(0, 12).forEach(e => store.watchEvent(e.id));
   const s = state.settings;
   const profile = getProfile();
 
@@ -268,19 +320,19 @@ function renderHome() {
         <button class="btn btn-small btn-ghost" id="btn-edit-profile">Edit</button>
       </div>` : ''}
 
-    <h2 class="section-title">Upcoming events</h2>
-    ${open.length ? open.map(eventCard).join('') : `<div class="empty">No open events right now. Check back soon, or follow <a href="https://instagram.com/${esc(s.instagram || '')}" target="_blank" rel="noopener">@${esc(s.instagram || '')}</a>.</div>`}
+    <h2 class="section-title">Choose your Saturday</h2>
+    ${upcoming.length ? upcoming.map(e => eventCard(e)).join('') : `<div class="empty">No open events right now. Check back soon, or follow <a href="https://instagram.com/${esc(s.instagram || '')}" target="_blank" rel="noopener">@${esc(s.instagram || '')}</a>.</div>`}
 
     ${exec ? `
       <div class="exec-panel">
         <h2 class="section-title">Exec tools</h2>
         <div class="row gap wrap">
           <button class="btn btn-primary" id="btn-new-event">＋ New event</button>
-          ${state.events.length ? `<button class="btn btn-ghost" id="btn-dup-event">Duplicate latest</button>` : ''}
+          ${state.events.length ? `<button class="btn btn-ghost" id="btn-dup-event">＋ Next Saturday (copy latest)</button>` : ''}
           <button class="btn btn-ghost" id="btn-settings">Club settings</button>
           ${store.mode === 'demo' ? `<button class="btn btn-ghost" id="btn-reset-demo">Reset demo data</button>` : ''}
         </div>
-        ${closed.length ? `<h3 class="section-sub">Past / closed events</h3>${closed.map(eventCard).join('')}` : ''}
+        ${past.length ? `<h3 class="section-sub">Week by week record</h3>${past.map(e => eventCard(e, { record: true })).join('')}` : ''}
       </div>` : ''}
 
     <footer class="info-box">
@@ -341,7 +393,7 @@ function renderEvent(ev) {
   const exec = isExec();
   const s = state.settings;
   const mine = mySignups(ev.id);
-  const isOpen = ev.status === 'open';
+  const isOpen = isEventOpen(ev);
 
   const sessionsHtml = (ev.sessions || []).map(sess => {
     const lists = (ev.lists || []).filter(l => l.sessionId === sess.id);
@@ -366,7 +418,6 @@ function renderEvent(ev) {
                 <div class="list-cap">
                   <div class="capbar"><div class="capbar-fill ${full ? 'full' : ''}" style="width:${l.cap ? Math.min(100, confirmed.length / l.cap * 100) : 0}%"></div></div>
                   <span class="cap-text">${confirmed.length}/${l.cap || 0}${full ? ' · FULL' : ` · ${spotsLeft} left`}</span>
-                  <span class="list-price">${fmtMoney(l.priceE ?? 0)}${(l.priceC ?? 0) !== (l.priceE ?? 0) ? ` / ${fmtMoney(l.priceC)} cash` : ''}</span>
                 </div>
                 <div class="entries">
                   ${confirmed.map(e => entryRow(ev, e, { exec })).join('') || '<div class="empty-list">No one yet — be first!</div>'}
@@ -387,8 +438,9 @@ function renderEvent(ev) {
         <div class="grow">
           <h1 class="event-h1">${esc(fmtDate(ev.date))}</h1>
           <div class="event-sub">${esc(ev.title || '')} · ${esc(ev.location || s.location || '')}</div>
+          <div class="event-prices">${pricesSummary(ev)}</div>
         </div>
-        ${!isOpen ? '<span class="chip chip-muted">Closed</span>' : ''}
+        ${!isOpen ? `<span class="chip chip-muted">${isPastEvent(ev) ? 'Past event' : 'Closed'}</span>` : ''}
       </div>
       ${mine.length ? `
         <div class="my-spots">
@@ -409,7 +461,6 @@ function renderEvent(ev) {
         </div>` : ''}
     </div>
     ${sessionsHtml}
-    ${(ev.bundles || []).length ? `<div class="bundle-note">💡 ${ev.bundles.map(b => `${esc(b.label)}: <strong>${fmtMoney(b.priceE)}</strong>${(b.priceC ?? b.priceE) !== b.priceE ? ` / ${fmtMoney(b.priceC)} cash` : ''}`).join(' · ')}</div>` : ''}
   `;
 
   $$('[data-join]').forEach(b => b.addEventListener('click', e => {
@@ -525,7 +576,6 @@ function openJoinSheet(ev, preselectedListId) {
               <input type="checkbox" data-list="${esc(l.id)}" ${l.id === preselectedListId ? 'checked' : ''}>
               <span class="grow">${sport.emoji} ${esc(sport.label)} — ${esc(l.label)}</span>
               ${full ? '<span class="chip chip-wl">waitlist</span>' : ''}
-              <span class="join-price">${fmtMoney(l.priceE ?? 0)}</span>
             </label>`;
         }).join('')}
       </div>`;
@@ -536,6 +586,7 @@ function openJoinSheet(ev, preselectedListId) {
       <h2>Sign up — ${esc(fmtDate(ev.date))}</h2>
       ${profileFieldsHtml(p)}
       <h3 class="section-sub">Pick your list(s)</h3>
+      <div class="prices-once">${pricesSummary(ev)}</div>
       ${listCheckboxes || '<p class="hint">You are already on every list 😄</p>'}
       <h3 class="section-sub">Payment method</h3>
       <div class="row gap">
@@ -849,7 +900,7 @@ function sportOptions(sel) {
 
 function openEventEditor(ev, { isNew = false } = {}) {
   const creating = !ev || isNew;
-  const draft = ev ? JSON.parse(JSON.stringify(ev)) : makeTemplateEvent(new Date().toISOString().slice(0, 10), 'Saturday Drop-in');
+  const draft = ev ? JSON.parse(JSON.stringify(ev)) : makeTemplateEvent(nextSaturday(), 'Saturday Drop-in');
   if (!ev) draft.lists = draft.lists || [];
 
   const ov = openModal(`

@@ -75,6 +75,9 @@ a { color: var(--orange-dark); }
 .event-title { color: var(--ink-soft); font-size: 13px; }
 .event-sports { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .event-meta { display: flex; justify-content: space-between; align-items: center; color: var(--ink-soft); font-size: 13px; }
+.event-record { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--ink-soft); }
+.rec-good { color: var(--green); font-weight: 700; }
+.rec-bad { color: var(--red); font-weight: 700; }
 
 /* ------- chips / badges ------- */
 .chip {
@@ -92,6 +95,7 @@ a { color: var(--orange-dark); }
 .chip-mine { background: var(--green-soft); color: #1f6e30; border-color: #bfe3c8; }
 .chip-muted { background: #eee9df; color: var(--ink-soft); border-color: var(--line); }
 .chip-demo { background: #f3e8ff; color: #6b21a8; border-color: #e0c8f7; }
+.chip-soon { background: var(--orange); color: #fff; border-color: var(--orange-dark); }
 
 /* ------- buttons / inputs ------- */
 .btn {
@@ -164,6 +168,7 @@ select.input { appearance: auto; }
 .event-head { margin-bottom: 8px; }
 .event-h1 { margin: 0; font-size: 22px; }
 .event-sub { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+.event-prices { margin-top: 8px; font-size: 13px; color: var(--ink-soft); }
 .my-spots { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
 .exec-toolbar { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
 
@@ -181,7 +186,6 @@ select.input { appearance: auto; }
 .capbar-fill { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.3s; }
 .capbar-fill.full { background: var(--red); }
 .cap-text { white-space: nowrap; font-weight: 600; }
-.list-price { margin-left: auto; font-weight: 700; color: var(--ink); }
 
 .entries { display: flex; flex-direction: column; }
 .entry {
@@ -204,12 +208,6 @@ select.input { appearance: auto; }
   border-top: 2px dashed #f0dda3;
 }
 .btn-join { margin-top: 4px; }
-
-.bundle-note {
-  margin-top: 18px; padding: 12px 14px;
-  background: #fff8e8; border: 1px solid #f0dda3; border-radius: var(--radius);
-  font-size: 13px;
-}
 
 /* ------- info / exec ------- */
 .info-box {
@@ -250,6 +248,11 @@ select.input { appearance: auto; }
 .hint { color: var(--ink-soft); font-size: 13px; margin: 0; }
 .confirm-msg { font-size: 15px; margin: 4px 0 8px; }
 
+.prices-once {
+  font-size: 13px; color: var(--ink-soft);
+  background: #fff8e8; border: 1px solid #f0dda3; border-radius: 10px;
+  padding: 8px 12px; margin-bottom: 8px; line-height: 1.7;
+}
 .join-session { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; margin-bottom: 8px; }
 .join-session-label { background: #f3ecdf; padding: 7px 12px; font-weight: 700; font-size: 13px; }
 .join-list { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid #f4eee2; cursor: pointer; font-size: 14px; }
