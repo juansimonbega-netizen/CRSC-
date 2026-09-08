@@ -90,10 +90,17 @@ export function makeTemplateEvent(dateStr, title) {
   };
 }
 
+/* Local-time ISO date (YYYY-MM-DD). Never use toISOString() for calendar
+ * dates: it converts to UTC, which in Montréal shifts evening dates to the
+ * next day — turning Saturdays into Sundays. */
+export function localISO(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function nextSaturday(offsetWeeks = 0) {
   const d = new Date();
   d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7) + offsetWeeks * 7);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 }
 
 /* Every Saturday from the next one through endDate (inclusive), as ISO dates. */
@@ -112,7 +119,7 @@ export function saturdaysUntil(endDate) {
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v3';
+const DEMO_KEY = 'crsc-demo-v4';
 
 function demoSeed() {
   const seedSignups = (ev, listIdx, names, { paid = false, teamed = false } = {}) => names.map(([name, insta], i) => ({

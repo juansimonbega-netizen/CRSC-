@@ -1,5 +1,5 @@
 import {
-  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday, saturdaysUntil,
+  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday, saturdaysUntil, localISO,
 } from './store.js';
 import { t, getLang, setLang, locale } from './i18n.js';
 import { promotionCandidate, sendPromotionEmail } from './notify.js';
@@ -142,7 +142,7 @@ function sessionById(event, sessionId) {
 }
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return localISO();
 }
 
 /* An event whose Saturday has passed becomes a read-only record automatically. */
