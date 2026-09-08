@@ -137,6 +137,13 @@ function mySignups(eventId) {
 function listById(event, listId) {
   return (event.lists || []).find(l => l.id === listId);
 }
+
+/* Team-count choices per sport (volleyball: at most 4 teams). */
+function teamOptionsFor(sport) {
+  const max = SPORTS[sport]?.maxTeams;
+  const all = [2, 3, 4, 6];
+  return max ? all.filter(n => n <= max) : all;
+}
 function sessionById(event, sessionId) {
   return (event.sessions || []).find(s => s.id === sessionId);
 }
@@ -416,6 +423,7 @@ function route() {
 function render() {
   const r = route();
   renderHeader();
+  if (!getProfile()) { renderWelcome(); return; }
   if (r.view === 'event') {
     const ev = state.events.find(e => e.id === r.eventId);
     if (ev) { store.watchEvent(ev.id); renderEvent(ev); }
@@ -448,6 +456,46 @@ function renderHeader() {
   if (on) on.addEventListener('click', openPinModal);
   const off = $('#btn-exec-off');
   if (off) off.addEventListener('click', () => { setExec(false); toast(t('execModeOff')); render(); });
+}
+
+/* ================================================================== */
+/* Registration gate: everyone makes a profile before using the app    */
+/* ================================================================== */
+
+function registerPlayer(profile) {
+  store.savePlayer({
+    deviceId: DEVICE,
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone || '',
+    insta: profile.insta || '',
+    photo: profile.photo || '',
+    lang: getLang(),
+    lastSeen: Date.now(),
+  }).catch(err => console.error('savePlayer', err));
+}
+
+function renderWelcome() {
+  $('#view').innerHTML = `
+    <section class="hero">
+      <h1>${esc(t('welcomeTitle'))}</h1>
+      <p>${esc(t('tagline'))}</p>
+    </section>
+    <div class="card welcome-card">
+      <p class="hint">${esc(t('welcomeText'))}</p>
+      ${profileFieldsHtml(null)}
+      <p class="hint">${esc(t('welcomePrivacy'))}</p>
+      <button class="btn btn-primary wide" id="welcome-save">${esc(t('continueBtn'))}</button>
+    </div>`;
+  wireProfileFields(document, null);
+  $('#welcome-save').addEventListener('click', () => {
+    const np = readProfileFields(document);
+    if (!np) return;
+    saveProfile(np);
+    registerPlayer(np);
+    toast(t('profileSaved'));
+    render();
+  });
 }
 
 /* ================================================================== */
@@ -567,7 +615,10 @@ function renderHome() {
   const upcoming = state.events.filter(e => !isPastEvent(e));
   const past = state.events.filter(isPastEvent).sort((a, b) => (a.date < b.date ? 1 : -1));
   upcoming.forEach(e => store.watchEvent(e.id));
-  if (exec) past.slice(0, 12).forEach(e => store.watchEvent(e.id));
+  if (exec) {
+    past.slice(0, 12).forEach(e => store.watchEvent(e.id));
+    store.watchPlayers();
+  }
 
   $('#view').innerHTML = `
     <section class="hero">
@@ -599,6 +650,7 @@ function renderHome() {
         <div class="row gap wrap">
           <button class="btn btn-primary" id="btn-new-event">${esc(t('newEvent'))}</button>
           ${state.events.length ? `<button class="btn btn-ghost" id="btn-season">${esc(t('openSeason'))}</button>` : ''}
+          <button class="btn btn-ghost" id="btn-players">${esc(t('playersBtn'))}</button>
           <button class="btn btn-ghost" id="btn-settings">${esc(t('clubSettings'))}</button>
           ${store.mode === 'demo' ? `<button class="btn btn-ghost" id="btn-reset-demo">${esc(t('resetDemo'))}</button>` : ''}
         </div>
@@ -616,6 +668,7 @@ function renderHome() {
   $('#btn-edit-profile')?.addEventListener('click', () => openProfileModal());
   $('#btn-new-event')?.addEventListener('click', () => openEventEditor(null));
   $('#btn-season')?.addEventListener('click', openSeason);
+  $('#btn-players')?.addEventListener('click', openPlayersModal);
   $('#btn-settings')?.addEventListener('click', openSettingsModal);
   $('#btn-reset-demo')?.addEventListener('click', async () => {
     if (await confirmModal(t('resetDemoConfirm'))) {
@@ -731,7 +784,7 @@ function renderEvent(ev) {
                     <label class="teams-ctl">${esc(t('teams'))}
                       <select data-teams="${esc(l.id)}">
                         <option value="0" ${!l.teamCount ? 'selected' : ''}>${esc(t('noTeams'))}</option>
-                        ${[2, 3, 4, 6].map(n => `<option value="${n}" ${l.teamCount === n ? 'selected' : ''}>${n}</option>`).join('')}
+                        ${teamOptionsFor(l.sport).map(n => `<option value="${n}" ${l.teamCount === n ? 'selected' : ''}>${n}</option>`).join('')}
                       </select>
                     </label>
                   </div>` : ''}
@@ -872,6 +925,7 @@ function openProfileModal() {
     const np = readProfileFields(ov);
     if (!np) return;
     saveProfile(np);
+    registerPlayer(np);
     ov.remove(); toast(t('profileSaved')); render();
   });
 }
@@ -950,6 +1004,7 @@ function openJoinSheet(ev, preselectedListId) {
     if (!chosen.length) { toast(t('pickOne'), 'err'); return; }
     const method = $('input[name="paym"]:checked', ov).value;
     saveProfile(np);
+    registerPlayer(np);
     const now = Date.now();
     const signups = chosen.map((listId, i) => ({
       id: uid('su'),
@@ -1059,12 +1114,22 @@ function openPlayerAdminModal(ev, su) {
         <button class="btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}" id="pa-in">${esc(su.checkedIn ? t('checkedIn') : t('checkIn'))}</button>
       </div>
       <p class="hint">${esc(su.method === 'cash' ? t('cashOnSite') : t('etransfer'))}${su.addedByExec ? ' · ' + esc(t('addedByExec')) : ''}</p>
-      ${teamCount ? `
-        <label class="field-label">${esc(t('putInTeam'))}</label>
+      ${teamCount ? (() => {
+        // Enforce per-team size limits (volleyball: max 7 per team).
+        const size = SPORTS[curList?.sport]?.teamSize || 0;
+        const { confirmed } = splitByCap(listEntries(ev.id, su.listId), curList?.cap || 0);
+        return `
+        <label class="field-label">${esc(t('putInTeam'))}${size ? ` (max ${size})` : ''}</label>
         <div class="row gap wrap" id="pa-teams">
           <button class="btn btn-small ${!su.team ? 'btn-exec' : 'btn-ghost'}" data-team="0">—</button>
-          ${Array.from({ length: teamCount }, (_, i) => `<button class="btn btn-small ${su.team === i + 1 ? 'btn-exec' : 'btn-ghost'}" data-team="${i + 1}">${i + 1}</button>`).join('')}
-        </div>` : ''}
+          ${Array.from({ length: teamCount }, (_, i) => {
+            const n = i + 1;
+            const members = confirmed.filter(e => e.team === n).length;
+            const full = size && members >= size && su.team !== n;
+            return `<button class="btn btn-small ${su.team === n ? 'btn-exec' : 'btn-ghost'}" data-team="${n}" ${full ? 'disabled' : ''}>${n}${size ? ` · ${members}/${size}` : ''}</button>`;
+          }).join('')}
+        </div>`;
+      })() : ''}
       <label class="field-label">${esc(t('moveTo'))}</label>
       <select class="input" id="pa-move">${listsOptions}</select>
       <div class="row gap">
@@ -1155,6 +1220,80 @@ function openExecAddModal(ev, listId) {
     ov.remove();
     toast(t('added', { name }));
   });
+}
+
+/* ================================================================== */
+/* Exec: players directory                                             */
+/* ================================================================== */
+
+/*
+ * Every registered player (from the registration gate) merged with their
+ * game history from the loaded events. People who signed up on someone
+ * else's phone or were added by an exec appear too, via their signups.
+ */
+function allPlayers() {
+  const byId = {};
+  for (const p of Object.values(state.players || {})) {
+    byId[p.deviceId] = { ...p, games: 0, unpaid: 0 };
+  }
+  for (const [evId, signups] of Object.entries(state.signups)) {
+    const ev = state.events.find(e => e.id === evId);
+    if (!ev) continue;
+    for (const su of signups) {
+      const key = su.deviceId && su.deviceId !== 'exec-added' ? su.deviceId : 'name:' + su.name.toLowerCase();
+      if (!byId[key]) byId[key] = { deviceId: key, name: su.name, insta: su.insta, email: su.email || '', phone: su.phone || '', photo: su.photo || '', games: 0, unpaid: 0 };
+      byId[key].games++;
+      if (!su.paid) byId[key].unpaid++;
+      if (!byId[key].email && su.email) byId[key].email = su.email;
+      if (!byId[key].photo && su.photo) byId[key].photo = su.photo;
+    }
+  }
+  return Object.values(byId).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
+function openPlayersModal() {
+  const ov = openModal(`
+    <div class="modal-body">
+      <h2 id="pl-title"></h2>
+      <input class="input" id="pl-search" placeholder="${esc(t('searchPh'))}">
+      <div class="summary-list players-list" id="pl-list"></div>
+      <div class="row gap">
+        <button class="btn btn-ghost grow" id="pl-csv">${esc(t('exportPlayers'))}</button>
+        <button class="btn btn-primary grow" data-close>${esc(t('close'))}</button>
+      </div>
+    </div>`, { wide: true });
+
+  function renderList() {
+    const q = $('#pl-search', ov).value.trim().toLowerCase();
+    const players = allPlayers().filter(p =>
+      !q || [p.name, p.insta, p.email, p.phone].some(v => (v || '').toLowerCase().includes(q)));
+    $('#pl-title', ov).textContent = t('playersTitle', { n: players.length });
+    $('#pl-list', ov).innerHTML = players.map(p => `
+      <div class="entry player-row">
+        ${avatarHtml(p, 'avatar-sm')}
+        <div class="grow entry-name">
+          <span>${esc(p.name)}</span>
+          <small>
+            ${p.insta ? '@' + esc(p.insta) + ' · ' : ''}${esc(p.email || '')}${p.phone ? ' · ' + esc(p.phone) : ''}
+          </small>
+        </div>
+        <span class="chip ${p.games ? 'chip-mine' : 'chip-muted'}">${esc(p.games ? t('gamesPlayed', { n: p.games }) : t('neverPlayed'))}</span>
+        ${p.unpaid ? `<span class="chip chip-unpaid">${esc(t('unpaidCount', { n: p.unpaid }))}</span>` : ''}
+      </div>`).join('') || `<p class="hint">${esc(t('noMatches'))}</p>`;
+  }
+  $('#pl-search', ov).addEventListener('input', renderList);
+  $('#pl-csv', ov).addEventListener('click', () => {
+    const rows = [['Name', 'Email', 'Phone', 'Instagram', 'Games', 'Unpaid signups']];
+    for (const p of allPlayers()) rows.push([p.name, p.email || '', p.phone || '', p.insta || '', p.games, p.unpaid]);
+    const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'crsc-players.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  renderList();
 }
 
 /* ================================================================== */
@@ -1270,7 +1409,7 @@ function openEventEditor(ev, { isNew = false } = {}) {
           </select>
           <select class="input grow" data-f="sport">${sportOptions(l.sport)}</select>
           <select class="input input-num" data-f="teamCount" title="${esc(t('teams'))}">
-            ${[0, 2, 3, 4, 6].map(n => `<option value="${n}" ${(l.teamCount || 0) === n ? 'selected' : ''}>${n || '—'}</option>`).join('')}
+            ${[0, ...teamOptionsFor(l.sport)].map(n => `<option value="${n}" ${(l.teamCount || 0) === n ? 'selected' : ''}>${n || '—'}</option>`).join('')}
           </select>
           <button class="btn btn-tiny btn-danger" data-del="${i}">✕</button>
         </div>
@@ -1389,6 +1528,8 @@ async function main() {
   document.documentElement.lang = getLang();
   store = await createStore();
   window.addEventListener('hashchange', render);
+  const existing = getProfile();
+  if (existing) registerPlayer(existing); // keep the directory's "last seen" fresh
   await store.init(newState => {
     state = newState;
     render();

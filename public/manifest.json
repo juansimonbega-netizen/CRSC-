@@ -1,0 +1,13 @@
+{
+  "name": "CRSC Saturday Drop-in",
+  "short_name": "CRSC",
+  "description": "Sign up for CRSC Saturday drop-in volleyball, basketball and football.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f4efe3",
+  "theme_color": "#f4efe3",
+  "icons": [
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

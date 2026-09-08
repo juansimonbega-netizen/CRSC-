@@ -147,6 +147,13 @@ select.input { appearance: auto; }
 .m0 { margin: 0; }
 .hint { color: var(--ink-soft); font-size: 13px; margin: 0; }
 
+/* ------- registration gate ------- */
+.welcome-card { max-width: 440px; margin: 12px auto 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* ------- players directory ------- */
+.players-list { max-height: 55vh; }
+.player-row small { display: block; color: var(--ink-soft); font-size: 11px; word-break: break-all; }
+
 /* ------- profile ------- */
 .profile-strip {
   display: flex; align-items: center; gap: 10px;

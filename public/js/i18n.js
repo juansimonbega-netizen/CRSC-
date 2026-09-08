@@ -57,6 +57,22 @@ const STRINGS = {
   closed: ['Closed', 'Fermé'],
   thisSaturday: ['This Saturday', 'Ce samedi'],
 
+  /* registration gate */
+  welcomeTitle: ['Welcome to CRSC', 'Bienvenue au CRSC'],
+  welcomeText: ['Create your player profile to see the calendar and sign up for games. It takes 20 seconds and this device remembers you.', 'Créez votre profil de joueur pour voir le calendrier et vous inscrire aux parties. 20 secondes, et cet appareil se souvient de vous.'],
+  welcomePrivacy: ['Your email is only used for game confirmations and payment reminders from the club.', 'Votre courriel sert uniquement aux confirmations et rappels de paiement du club.'],
+  continueBtn: ['Create my profile', 'Créer mon profil'],
+
+  /* players directory (exec) */
+  playersBtn: ['Players', 'Joueurs'],
+  playersTitle: ['All players ({n})', 'Tous les joueurs ({n})'],
+  searchPh: ['Search name, Instagram, email…', 'Rechercher nom, Instagram, courriel…'],
+  gamesPlayed: ['{n} game(s)', '{n} partie(s)'],
+  neverPlayed: ['registered, no games yet', 'inscrit, aucune partie'],
+  unpaidCount: ['{n} unpaid', '{n} impayé(s)'],
+  exportPlayers: ['Export players CSV', 'Exporter les joueurs (CSV)'],
+  noMatches: ['No players match.', 'Aucun joueur trouvé.'],
+
   /* profile */
   yourProfile: ['Your profile', 'Votre profil'],
   profileHint: ['Saved on this device so next time is one tap.', 'Enregistré sur cet appareil — la prochaine fois, un seul clic.'],

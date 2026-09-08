@@ -40,7 +40,9 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const SPORTS = {
-  volleyball: { label: 'Volleyball', emoji: '🏐', color: '#2f7dd1' },
+  /* Volleyball games: at most 4 teams of at most 7 players each. Team rules
+   * for basketball and football are still to be decided by the club. */
+  volleyball: { label: 'Volleyball', emoji: '🏐', color: '#2f7dd1', maxTeams: 4, teamSize: 7 },
   basketball: { label: 'Basketball', emoji: '🏀', color: '#e0762c' },
   football:   { label: 'Football',   emoji: '⚽', color: '#2f9e44' },
   badminton:  { label: 'Badminton',  emoji: '🏸', color: '#9c36b5' },
@@ -122,22 +124,28 @@ export function saturdaysUntil(endDate) {
 const DEMO_KEY = 'crsc-demo-v4';
 
 function demoSeed() {
-  const seedSignups = (ev, listIdx, names, { paid = false, teamed = false } = {}) => names.map(([name, insta], i) => ({
-    id: uid('su'),
-    listId: ev.lists[listIdx].id,
-    name, insta,
-    email: name.toLowerCase().replace(/\s+/g, '.') + '@example.com',
-    phone: '',
-    photo: '',
-    deviceId: 'demo-seed',
-    method: i % 2 ? 'cash' : 'etransfer',
-    paid: paid || i < 2,
-    checkedIn: paid,
-    team: teamed ? (i % 2) + 1 : null,
-    order: Date.now() + i,
-    createdAt: Date.now() + i,
-    addedByExec: false,
-  }));
+  const players = {};
+  const seedSignups = (ev, listIdx, names, { paid = false, teamed = false } = {}) => names.map(([name, insta], i) => {
+    const deviceId = 'demo-' + name.toLowerCase().replace(/\s+/g, '-');
+    const email = name.toLowerCase().replace(/\s+/g, '.') + '@example.com';
+    players[deviceId] = { deviceId, name, insta, email, phone: '', photo: '', lang: 'en', lastSeen: Date.now() };
+    return {
+      id: uid('su'),
+      listId: ev.lists[listIdx].id,
+      name, insta,
+      email,
+      phone: '',
+      photo: '',
+      deviceId,
+      method: i % 2 ? 'cash' : 'etransfer',
+      paid: paid || i < 2,
+      checkedIn: paid,
+      team: teamed ? (i % 2) + 1 : null,
+      order: Date.now() + i,
+      createdAt: Date.now() + i,
+      addedByExec: false,
+    };
+  });
 
   // A whole season of Saturdays to pick from, plus last week as a record.
   const season = saturdaysUntil(DEFAULT_SETTINGS.seasonEnd).slice(0, 16)
@@ -157,6 +165,7 @@ function demoSeed() {
     settings: { ...DEFAULT_SETTINGS },
     events: [past, ...season],
     signups,
+    players,
   };
 }
 
@@ -167,6 +176,7 @@ function createDemoStore() {
   } catch (e) { state = null; }
   if (!state || !state.settings || !Array.isArray(state.events)) state = demoSeed();
   state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
+  state.players = state.players || {};
   let onChange = () => {};
 
   function persist() {
@@ -209,6 +219,11 @@ function createDemoStore() {
       state.signups[eventId] = (state.signups[eventId] || []).filter(x => x.id !== signupId);
       persist();
     },
+    async savePlayer(player) {
+      state.players[player.deviceId] = { ...state.players[player.deviceId], ...player };
+      persist();
+    },
+    watchPlayers() {},
     resetDemo() {
       state = demoSeed();
       persist();
@@ -227,9 +242,10 @@ async function createFirebaseStore(config) {
   const app = appMod.initializeApp(config);
   const db = fs.getFirestore(app);
 
-  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {} };
+  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {} };
   let onChange = () => {};
   const eventWatchers = {}; // eventId -> unsubscribe
+  let playersWatcher = null;
 
   function emit() { onChange(state); }
 
@@ -286,6 +302,18 @@ async function createFirebaseStore(config) {
     },
     async deleteSignup(eventId, signupId) {
       await fs.deleteDoc(fs.doc(db, 'events', eventId, 'signups', signupId));
+    },
+    async savePlayer(player) {
+      const { deviceId, ...data } = player;
+      await fs.setDoc(fs.doc(db, 'players', deviceId), data, { merge: true });
+    },
+    watchPlayers() {
+      if (playersWatcher) return;
+      playersWatcher = fs.onSnapshot(fs.collection(db, 'players'), snap => {
+        state.players = {};
+        for (const d of snap.docs) state.players[d.id] = { deviceId: d.id, ...d.data() };
+        emit();
+      }, err => console.error('players listener', err));
     },
   };
 }

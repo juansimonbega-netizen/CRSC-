@@ -7,6 +7,9 @@ drop-in events (volleyball, basketball, football).
 ## What it does
 
 **For players**
+- **Registration first**: the first time anyone opens the link they create a
+  player profile (name + email required; phone, Instagram, photo optional).
+  The device remembers them — next visit goes straight to the calendar.
 - A **season calendar** (every Saturday until the configured season end, e.g. Dec 26): tap a date to sign up. Orange = open, struck-through = full, green ring = your games.
 - One-tap sign-up: first time you enter your **name + email + optional phone/Instagram/photo**; the device remembers you.
 - Pick **one or several lists** (e.g. volleyball in both slots) — the **4h bundle price** applies automatically. Prices are shown once, in one recap line.
@@ -17,7 +20,12 @@ drop-in events (volleyball, basketball, football).
 
 **For execs** (unlock with the club PIN — tap "Exec" in the header)
 - Tap any player to **mark paid / check in / move lists / assign a team / bump to top / remove**.
-- **Teams**: give any list 2–6 teams; assign players from their card. Players see the teams; only execs can change them. (Teams replace the old "court 1 / court 2" columns.)
+- **Players directory**: every registered player with their name, email, phone,
+  Instagram, photo, games played and unpaid count — searchable, exportable to CSV.
+- **Teams**: give any list teams and assign players from their card. Players see
+  the teams; only execs can change them. **Volleyball is capped at 4 teams of 7
+  players max** (buttons show each team's count and lock when full); basketball
+  and football rules can be added the same way once the club decides them.
 - **Payments screen**: who paid, who didn't, expected amount per person (bundle-aware), totals collected and outstanding.
 - **"Open the season"**: one tap creates an event for every remaining Saturday until the season end, copied from the latest event.
 - Every past Saturday is kept automatically as a read-only **week-by-week record** (players, collected, outstanding).
@@ -164,3 +172,11 @@ firestore.rules         Firestore security rules
 ```
 
 No build step, no npm dependencies — plain HTML/CSS/JS, easy for any exec to tweak.
+
+## App or website?
+
+It's a website that behaves like an app. It ships a web-app manifest and icons,
+so on a phone players can use "Add to Home Screen" (Share menu on iOS, browser
+menu on Android) and it opens full-screen with its own CRSC icon, like a native
+app — no app store, no installs to maintain, and every update is live for
+everyone the moment it's deployed.
