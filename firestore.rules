@@ -33,6 +33,16 @@ service cloud.firestore {
         && (!('photo' in request.resource.data) || request.resource.data.photo.size() <= 60000);
     }
 
+    // Received e-transfers, written by the Gmail matcher script; execs
+    // mark them matched from the Payments screen.
+    match /payments/{paymentId} {
+      allow read: if true;
+      allow create, update: if
+        (!('sender' in request.resource.data) || request.resource.data.sender.size() <= 100)
+        && (!('matchedTo' in request.resource.data) || request.resource.data.matchedTo.size() <= 100);
+      allow delete: if true;
+    }
+
     match /events/{eventId} {
       allow read: if true;
       allow write: if true;

@@ -30,6 +30,8 @@ export const DEFAULT_SETTINGS = {
   execPin: '1234',
   seasonEnd: '2026-12-26',
   lateFeeNote: '+5$ late fee if payment is made after the event',
+  lateFeeAmount: 5,
+  cancelLockHours: 24,
   battlePassNote: 'Volleyball season pass — 4h (both slots) 135$ instead of 165$ · 2h 75$ instead of 88$. E-transfer the club and an exec activates it on your profile.',
   policies: [
     'For e-Transfer make sure to mention the name of the person(s) you are paying for.',
@@ -122,7 +124,7 @@ export function saturdaysUntil(endDate) {
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v5';
+const DEMO_KEY = 'crsc-demo-v6';
 
 function demoSeed() {
   const players = {};
@@ -165,11 +167,20 @@ function demoSeed() {
   if (players['demo-rayan']) players['demo-rayan'].battlePass = '4h';
   if (players['demo-maya']) players['demo-maya'].battlePass = '2h';
 
+  // Leave one past signup unpaid so the automatic late fee is visible,
+  // and seed sample "received e-transfer" rows for the matcher UI.
+  const pastSus = signups[past.id];
+  if (pastSus[4]) { pastSus[4].paid = false; pastSus[4].checkedIn = false; }
+
   return {
     settings: { ...DEFAULT_SETTINGS },
     events: [past, ...season],
     signups,
     players,
+    payments: [
+      { id: 'demo-pay-1', sender: 'HUY NGUYEN', amount: 10, receivedAt: Date.now() - 3600000, matched: false },
+      { id: 'demo-pay-2', sender: 'SOMEONE ELSE', amount: 8, receivedAt: Date.now() - 7200000, matched: false },
+    ],
   };
 }
 
@@ -181,6 +192,7 @@ function createDemoStore() {
   if (!state || !state.settings || !Array.isArray(state.events)) state = demoSeed();
   state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
   state.players = state.players || {};
+  state.payments = state.payments || [];
   let onChange = () => {};
 
   function persist() {
@@ -228,6 +240,12 @@ function createDemoStore() {
       persist();
     },
     watchPlayers() {},
+    watchPayments() {},
+    async updatePayment(paymentId, patch) {
+      const p = state.payments.find(x => x.id === paymentId);
+      if (p) Object.assign(p, patch);
+      persist();
+    },
     resetDemo() {
       state = demoSeed();
       persist();
@@ -246,10 +264,11 @@ async function createFirebaseStore(config) {
   const app = appMod.initializeApp(config);
   const db = fs.getFirestore(app);
 
-  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {} };
+  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {}, payments: [] };
   let onChange = () => {};
   const eventWatchers = {}; // eventId -> unsubscribe
   let playersWatcher = null;
+  let paymentsWatcher = null;
 
   function emit() { onChange(state); }
 
@@ -318,6 +337,17 @@ async function createFirebaseStore(config) {
         for (const d of snap.docs) state.players[d.id] = { deviceId: d.id, ...d.data() };
         emit();
       }, err => console.error('players listener', err));
+    },
+    watchPayments() {
+      if (paymentsWatcher) return;
+      paymentsWatcher = fs.onSnapshot(fs.collection(db, 'payments'), snap => {
+        state.payments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        state.payments.sort((a, b) => (b.receivedAt || 0) - (a.receivedAt || 0));
+        emit();
+      }, err => console.error('payments listener', err));
+    },
+    async updatePayment(paymentId, patch) {
+      await fs.setDoc(fs.doc(db, 'payments', paymentId), patch, { merge: true });
     },
   };
 }

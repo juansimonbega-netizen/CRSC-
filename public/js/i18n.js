@@ -63,6 +63,18 @@ const STRINGS = {
   welcomePrivacy: ['Your email is only used for game confirmations and payment reminders from the club.', 'Votre courriel sert uniquement aux confirmations et rappels de paiement du club.'],
   continueBtn: ['Create my profile', 'Créer mon profil'],
 
+  /* received e-transfers (auto-matcher) */
+  moneyReceived: ['Received e-transfers — match to a player', 'Virements reçus — associer à un joueur'],
+  matchedToast: ['{name} marked paid ({amount})', '{name} marqué payé ({amount})'],
+  dismiss: ['Dismiss', 'Ignorer'],
+  dismissedToast: ['Payment dismissed', 'Virement ignoré'],
+  noUnpaidHere: ['No unpaid players on this event', 'Aucun joueur impayé pour cet événement'],
+
+  /* cancellation lock + late fee */
+  cancelLocked: ['Cancellations are closed for this event — message an exec if you can\'t make it.', 'Les annulations sont fermées pour cet événement — écrivez à un exec si vous ne pouvez pas venir.'],
+  lateFee: ['incl. late fee', 'incl. frais de retard'],
+  lateFeeAmountLbl: ['Late fee amount ($)', 'Montant des frais de retard ($)'],
+
   /* battle pass */
   battlePass: ['Battle Pass', 'Battle Pass'],
   battlePassLbl: ['Battle Pass (volleyball season)', 'Battle Pass (saison de volleyball)'],

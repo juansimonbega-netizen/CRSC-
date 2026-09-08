@@ -161,6 +161,17 @@ function isEventOpen(ev) {
   return ev.status === 'open' && !isPastEvent(ev);
 }
 
+/*
+ * Self-removal closes N hours before the first session (default 24h, so the
+ * waitlist has time to fill freed spots). Execs can still remove anyone.
+ */
+function cancellationLocked(ev) {
+  if (!ev.date) return false;
+  const hours = parseFloat(state.settings.cancelLockHours) || 24;
+  const start = new Date(ev.date + 'T17:00:00');
+  return Date.now() >= start.getTime() - hours * 3600 * 1000;
+}
+
 /* Season Battle Pass (volleyball only): '4h' | '2h' | null, set by execs
  * on the player's registry entry. */
 function playerPass(deviceId) {
@@ -271,10 +282,13 @@ function personTotals(ev) {
   }
   return Object.values(persons).map(p => {
     const pass = playerPass(p.deviceId);
-    const { total } = computePrice(ev, p.signups.map(x => x.listId), p.method, pass);
+    let { total } = computePrice(ev, p.signups.map(x => x.listId), p.method, pass);
+    const paid = p.signups.every(x => x.paid || covered.has(x.id));
+    // Automatic late fee once the Saturday has passed and they still owe.
+    const late = isPastEvent(ev) && !paid && total > 0;
+    if (late) total += parseFloat(state.settings.lateFeeAmount) || 0;
     return {
-      ...p, total, pass,
-      paid: p.signups.every(x => x.paid || covered.has(x.id)),
+      ...p, total, pass, late, paid,
       checkedIn: p.signups.some(x => x.checkedIn),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
@@ -672,6 +686,7 @@ function renderHome() {
   if (exec) {
     past.slice(0, 12).forEach(e => store.watchEvent(e.id));
     store.watchPlayers();
+    store.watchPayments();
   }
 
   $('#view').innerHTML = `
@@ -771,7 +786,7 @@ function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } =
       </div>
       ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
       ${exec || mine ? `${exec && s.checkedIn ? `<span class="chip chip-in">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (covered ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
-      ${mine && !exec ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
+      ${mine && !exec && !cancellationLocked(ev) ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
 }
 
@@ -806,6 +821,7 @@ function renderEvent(ev) {
   const mine = mySignups(ev.id);
   const isOpen = isEventOpen(ev);
   const coveredSet = coveredSignupIds(ev);
+  if (exec) store.watchPayments();
 
   const sessionsHtml = (ev.sessions || []).map(sess => {
     const lists = (ev.lists || []).filter(l => l.sessionId === sess.id);
@@ -872,11 +888,12 @@ function renderEvent(ev) {
             return `<span class="chip chip-mine">${esc(SPORTS[l?.sport]?.label || '')} ${esc(l ? l.label : '?')}${sess ? ' · ' + esc(sess.label) : ''}</span>`;
           }).join('')}
           ${mine.some(m => !m.paid && !coveredSet.has(m.id)) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : `<span class="chip ${mine.some(m => coveredSet.has(m.id)) ? 'chip-pass' : 'chip-paid'}">${esc(mine.every(m => coveredSet.has(m.id)) ? t('battlePass') : t('allPaid'))}</span>`}
-        </div>` : ''}
+        </div>
+        ${!exec && isOpen && cancellationLocked(ev) ? `<p class="hint">${esc(t('cancelLocked'))}</p>` : ''}` : ''}
       ${exec ? `
         <div class="row gap wrap exec-toolbar">
           <button class="btn btn-small btn-ghost" id="btn-edit-event">${esc(t('editEvent'))}</button>
-          <button class="btn btn-small btn-ghost" id="btn-summary">${esc(t('payments'))}</button>
+          <button class="btn btn-small ${(state.payments || []).some(p => !p.matched) ? 'btn-warn' : 'btn-ghost'}" id="btn-summary">${esc(t('payments'))}${(state.payments || []).filter(p => !p.matched).length ? ` · ${(state.payments || []).filter(p => !p.matched).length}` : ''}</button>
           <button class="btn btn-small btn-ghost" id="btn-csv">${esc(t('exportCsv'))}</button>
           <button class="btn btn-small btn-ghost" id="btn-toggle-open">${esc(isOpen ? t('closeSignups') : t('reopenSignups'))}</button>
         </div>` : ''}
@@ -1404,13 +1421,26 @@ function openPlayersModal() {
 /* Exec: payments summary + CSV                                        */
 /* ================================================================== */
 
+/* Best guess for which unpaid player an e-transfer sender is. */
+function suggestMatch(sender, unpaid) {
+  const tokens = sender.toLowerCase().split(/\s+/).filter(Boolean);
+  let best = null; let bestScore = 0;
+  for (const p of unpaid) {
+    const words = (p.name || '').toLowerCase().split(/\s+/);
+    const score = words.filter(w => tokens.includes(w)).length;
+    if (score > bestScore) { best = p; bestScore = score; }
+  }
+  return best;
+}
+
 function openSummaryModal(ev) {
   const people = personTotals(ev);
   const paid = people.filter(p => p.paid);
   const unpaid = people.filter(p => !p.paid);
   const collected = paid.reduce((a, p) => a + p.total, 0);
   const outstanding = unpaid.reduce((a, p) => a + p.total, 0);
-  openModal(`
+  const pays = (state.payments || []).filter(p => !p.matched);
+  const ov = openModal(`
     <div class="modal-body">
       <h2>${esc(t('paymentsTitle', { date: fmtDate(ev.date) }))}</h2>
       <div class="stat-row">
@@ -1418,10 +1448,32 @@ function openSummaryModal(ev) {
         <div class="stat stat-good"><strong>${fmtMoney(collected)}</strong><span>${esc(t('collected'))}</span></div>
         <div class="stat stat-bad"><strong>${fmtMoney(outstanding)}</strong><span>${esc(t('outstanding'))}</span></div>
       </div>
+      ${pays.length ? `
+        <h3 class="section-sub">${esc(t('moneyReceived'))}</h3>
+        <div class="summary-list">
+          ${pays.map(pay => {
+            const sug = suggestMatch(pay.sender || '', unpaid);
+            return `
+            <div class="pay-match" data-pay="${esc(pay.id)}">
+              <div class="row gap center">
+                <strong class="grow">${esc(pay.sender || '?')}</strong>
+                <span class="pay-amt">${fmtMoney(pay.amount || 0)}</span>
+              </div>
+              <div class="row gap">
+                ${unpaid.length ? `
+                  <select class="input grow" data-match-sel>
+                    ${unpaid.map(u => `<option value="${esc(u.name)}" ${sug && sug.name === u.name ? 'selected' : ''}>${esc(u.name)} (${fmtMoney(u.total)})</option>`).join('')}
+                  </select>
+                  <button class="btn btn-small btn-success" data-match-go>✓</button>` : `<span class="hint grow">${esc(t('noUnpaidHere'))}</span>`}
+                <button class="btn btn-small btn-ghost" data-match-x title="${esc(t('dismiss'))}">✕</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
       ${unpaid.length ? `
         <h3 class="section-sub">${esc(t('notPaidYet', { n: unpaid.length }))}</h3>
         <div class="summary-list">
-          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}</span><span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
+          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}${p.late ? ` <small>(${esc(t('lateFee'))})</small>` : ''}</span><span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
         </div>` : `<p class="hint">${esc(t('everyonePaid'))}</p>`}
       ${paid.length ? `
         <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
@@ -1430,6 +1482,26 @@ function openSummaryModal(ev) {
         </div>` : ''}
       <button class="btn btn-primary wide" data-close>${esc(t('close'))}</button>
     </div>`, { wide: true });
+
+  $$('.pay-match', ov).forEach(row => {
+    const pay = pays.find(p => p.id === row.dataset.pay);
+    const go = $('[data-match-go]', row);
+    if (go) go.addEventListener('click', async () => {
+      const name = $('[data-match-sel]', row).value;
+      const person = unpaid.find(u => u.name === name);
+      if (!person) return;
+      await Promise.all(person.signups.map(su => store.updateSignup(ev.id, su.id, { paid: true, paidAt: Date.now() })));
+      await store.updatePayment(pay.id, { matched: true, matchedTo: name, matchedEvent: ev.id });
+      toast(t('matchedToast', { name, amount: fmtMoney(pay.amount || 0) }));
+      ov.remove();
+      openSummaryModal(state.events.find(e => e.id === ev.id) || ev);
+    });
+    $('[data-match-x]', row).addEventListener('click', async () => {
+      await store.updatePayment(pay.id, { matched: true, matchedTo: '' });
+      toast(t('dismissedToast'));
+      row.remove();
+    });
+  });
 }
 
 function exportCsv(ev) {
@@ -1600,6 +1672,8 @@ function openSettingsModal() {
         <input class="input" id="cs-season" type="date" value="${esc(s.seasonEnd || '')}">
         <label class="field-label">${esc(t('lateFeeLbl'))}</label>
         <input class="input" id="cs-latefee" value="${esc(s.lateFeeNote || '')}">
+        <label class="field-label">${esc(t('lateFeeAmountLbl'))}</label>
+        <input class="input input-num" id="cs-latefeeamt" type="number" min="0" step="1" value="${esc(s.lateFeeAmount ?? 5)}">
         <label class="field-label">${esc(t('battlePassNoteLbl'))}</label>
         <textarea class="input" id="cs-bpnote" rows="3">${esc(s.battlePassNote || '')}</textarea>
         <label class="field-label">${esc(t('policiesLbl'))}</label>
@@ -1618,6 +1692,7 @@ function openSettingsModal() {
       execPin: $('#cs-pin', ov).value.trim() || '1234',
       seasonEnd: $('#cs-season', ov).value || s.seasonEnd || '',
       lateFeeNote: $('#cs-latefee', ov).value.trim(),
+      lateFeeAmount: parseFloat($('#cs-latefeeamt', ov).value) || 0,
       battlePassNote: $('#cs-bpnote', ov).value.trim(),
       policies: $('#cs-policies', ov).value.split('\n').map(x => x.trim()).filter(Boolean),
     });

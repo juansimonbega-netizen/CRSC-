@@ -137,11 +137,31 @@ person could use the mailer to send emails from the club account (capped at
 the daily quota). That matches the app's overall trust level; rotate the
 secret in both places if it's ever abused.
 
+## Automatic e-transfer matching (kills the manual payment checking)
+
+A second Apps Script in the club Gmail ([`apps-script/payment-matcher.gs`](apps-script/payment-matcher.gs),
+setup instructions inside the file) checks every 15 minutes for Interac
+"sent you money" notification emails, extracts the sender's name and amount,
+and records them in the database. On the exec **Payments** screen they appear
+under "Received e-transfers — match to a player" with the best-guess player
+pre-selected: one tap on ✓ marks that player paid, ✕ dismisses unrelated
+transfers. The Payments button shows a count whenever transfers are waiting.
+(The outgoing mailer lives in [`apps-script/mailer.gs`](apps-script/mailer.gs).)
+
+## Cancellation lock & automatic late fee
+
+- Players cannot remove themselves in the final **24 hours** before a game
+  (they see "contact an exec"); execs can always remove anyone. The window is
+  the `cancelLockHours` setting.
+- Once a Saturday has passed, anyone still unpaid automatically owes the
+  **late fee** (default +5$, editable in Club settings) — reflected in the
+  payments screen, weekly records, and totals.
+
 ## Weekly exec workflow
 
 1. Once per season: **Open the season** — every Saturday is bookable from day one.
 2. Players pick their Saturdays from the calendar all season long.
-3. As e-transfers arrive, tap the player → *Mark paid*.
+3. E-transfers record themselves — open *Payments* and tap ✓ to confirm each match.
 4. Saturday afternoon: assign **teams** on each volleyball list.
 5. At the gym: tap players → *Check in*; collect cash → *Mark paid*.
 6. The *Payments* screen shows who still owes what; past weeks archive themselves.

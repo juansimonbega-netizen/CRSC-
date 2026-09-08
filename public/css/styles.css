@@ -401,6 +401,11 @@ select.input { appearance: auto; }
 .stat-bad strong { color: var(--red); }
 .summary-list { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; max-height: 240px; overflow-y: auto; }
 
+/* received-payment matcher */
+.pay-match { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-bottom: 1px solid #f0e9d9; }
+.pay-match:last-child { border-bottom: none; }
+.pay-amt { font-weight: 800; font-variant-numeric: tabular-nums; }
+
 /* event editor */
 .ee-list { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 8px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
 .ee-cols { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-soft); }
