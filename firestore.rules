@@ -32,6 +32,8 @@ service cloud.firestore {
           && request.resource.data.name.size() > 0
           && request.resource.data.name.size() <= 60
           && (!('insta' in request.resource.data) || request.resource.data.insta.size() <= 60)
+          && (!('email' in request.resource.data) || request.resource.data.email.size() <= 100)
+          && (!('phone' in request.resource.data) || request.resource.data.phone.size() <= 30)
           && (!('photo' in request.resource.data) || request.resource.data.photo.size() <= 60000);
       }
     }

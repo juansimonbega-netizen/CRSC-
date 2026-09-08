@@ -1,0 +1,227 @@
+/*
+ * Tiny i18n layer. English is the primary language, French the second.
+ * t('key', {vars}) looks up the current language and interpolates {vars}.
+ */
+
+const LANG_KEY = 'crsc-lang';
+
+export function getLang() {
+  try { return localStorage.getItem(LANG_KEY) === 'fr' ? 'fr' : 'en'; } catch (e) { return 'en'; }
+}
+
+export function setLang(lang) {
+  try { localStorage.setItem(LANG_KEY, lang === 'fr' ? 'fr' : 'en'); } catch (e) { /* ignore */ }
+  document.documentElement.lang = getLang();
+}
+
+export function locale() {
+  return getLang() === 'fr' ? 'fr-CA' : 'en-CA';
+}
+
+const STRINGS = {
+  /* general */
+  tagline: ['Volleyball · Basketball · Football — every Saturday night', 'Volleyball · Basketball · Soccer — tous les samedis soirs'],
+  heroTitle: ['Saturday night drop-in', 'Drop-in du samedi soir'],
+  execBtn: ['Exec', 'Exec'],
+  execOnBtn: ['Exec ✓', 'Exec ✓'],
+  execModeOn: ['Exec mode on', 'Mode exec activé'],
+  execModeOff: ['Exec mode off', 'Mode exec désactivé'],
+  demoTitle: ['Running without Firebase — data stays on this device', 'Sans Firebase — les données restent sur cet appareil'],
+  back: ['← Calendar', '← Calendrier'],
+  cancel: ['Cancel', 'Annuler'],
+  save: ['Save', 'Enregistrer'],
+  close: ['Close', 'Fermer'],
+  done: ['Done', 'Terminé'],
+  gotIt: ['Got it', 'Compris'],
+  confirm: ['Confirm', 'Confirmer'],
+  edit: ['Edit', 'Modifier'],
+  remove: ['Remove', 'Retirer'],
+  notFound: ['Event not found.', 'Événement introuvable.'],
+  backHome: ['Back to calendar', 'Retour au calendrier'],
+  errGeneric: ['Something went wrong — try again', 'Une erreur est survenue — réessayez'],
+
+  /* home / calendar */
+  chooseSaturday: ['Pick your Saturday', 'Choisissez votre samedi'],
+  calendarHint: ['Games run every Saturday until {end}. Tap a date to sign up.', 'Les parties ont lieu chaque samedi jusqu\'au {end}. Touchez une date pour vous inscrire.'],
+  noEvents: ['No dates are open yet — check back soon, or follow {insta}.', 'Aucune date ouverte pour l\'instant — revenez bientôt ou suivez {insta}.'],
+  legendOpen: ['open', 'ouvert'],
+  legendFull: ['full', 'complet'],
+  legendMine: ['your games', 'vos parties'],
+  yourGames: ['Your upcoming games', 'Vos prochaines parties'],
+  spotsLeft: ['{n} spots left', '{n} places restantes'],
+  full: ['Full', 'Complet'],
+  fullWaitlist: ['Full — waitlist open', 'Complet — liste d\'attente ouverte'],
+  signedUpCount: ['{n} signed up', '{n} inscrits'],
+  past: ['Past', 'Passé'],
+  pastEvent: ['Past event', 'Événement passé'],
+  closed: ['Closed', 'Fermé'],
+  thisSaturday: ['This Saturday', 'Ce samedi'],
+
+  /* profile */
+  yourProfile: ['Your profile', 'Votre profil'],
+  profileHint: ['Saved on this device so next time is one tap.', 'Enregistré sur cet appareil — la prochaine fois, un seul clic.'],
+  namePh: ['Your name *', 'Votre nom *'],
+  emailPh: ['Email * (for waitlist updates)', 'Courriel * (pour la liste d\'attente)'],
+  phonePh: ['Phone (optional)', 'Téléphone (facultatif)'],
+  instaPh: ['Instagram (optional, no @)', 'Instagram (facultatif, sans @)'],
+  addPhoto: ['Add a photo (optional)', 'Ajouter une photo (facultatif)'],
+  nameRequired: ['Please enter your name', 'Veuillez entrer votre nom'],
+  emailRequired: ['Please enter a valid email', 'Veuillez entrer un courriel valide'],
+  profileSaved: ['Profile saved', 'Profil enregistré'],
+  badImage: ['Could not read that image', 'Impossible de lire cette image'],
+
+  /* event page */
+  you: ['(you)', '(vous)'],
+  yourSpots: ['Your spots:', 'Vos places :'],
+  allPaid: ['All paid ✓', 'Tout payé ✓'],
+  howToPay: ['How to pay', 'Comment payer'],
+  join: ['Join', 'S\'inscrire'],
+  joinWaitlist: ['Join waitlist', 'Liste d\'attente'],
+  waitlist: ['Waitlist', 'Liste d\'attente'],
+  wlShort: ['WL #{n}', 'LA #{n}'],
+  beFirst: ['No one yet — be first!', 'Personne encore — soyez le premier!'],
+  team: ['Team {n}', 'Équipe {n}'],
+  noTeamYet: ['Teams not set yet', 'Équipes à venir'],
+  unassigned: ['Not placed yet', 'Pas encore placés'],
+  removeSelfConfirm: ['Remove {name} from this list?', 'Retirer {name} de cette liste ?'],
+  removeMe: ['Remove me', 'Me retirer'],
+  removedSelf: ['You were removed from the list', 'Vous avez été retiré de la liste'],
+  cashUnpaid: ['Cash · unpaid', 'Comptant · non payé'],
+  etransferUnpaid: ['E-transfer · unpaid', 'Virement · non payé'],
+  paid: ['Paid ✓', 'Payé ✓'],
+  here: ['Here', 'Présent'],
+
+  /* join sheet */
+  signupTitle: ['Sign up — {date}', 'Inscription — {date}'],
+  pickLists: ['Pick your list(s)', 'Choisissez vos listes'],
+  prices: ['Prices', 'Prix'],
+  bothSlots: ['both slots', 'les deux plages'],
+  cash: ['cash', 'comptant'],
+  onEveryList: ['You are already on every list.', 'Vous êtes déjà sur toutes les listes.'],
+  payMethod: ['Payment method', 'Mode de paiement'],
+  etransfer: ['E-transfer', 'Virement Interac'],
+  cashOnSite: ['Cash on site', 'Comptant sur place'],
+  toPay: ['To pay', 'À payer'],
+  newTotal: ['New total for this event', 'Nouveau total pour cet événement'],
+  selectOne: ['Select at least one list.', 'Sélectionnez au moins une liste.'],
+  pickOne: ['Pick at least one list', 'Choisissez au moins une liste'],
+  levelNote: ['The host might move your name to the appropriate level. Your spot is confirmed once payment is received.', 'L\'organisateur peut déplacer votre nom au niveau approprié. Votre place est confirmée à la réception du paiement.'],
+  confirmSignup: ['Confirm sign-up', 'Confirmer l\'inscription'],
+  onTheList: ['You\'re on the list!', 'Vous êtes inscrit!'],
+  etransferTo: ['Send your e-transfer to', 'Envoyez votre virement à'],
+  mentionName: ['Mention your name (and anyone you\'re paying for) in the message.', 'Indiquez votre nom (et celui des personnes pour qui vous payez) dans le message.'],
+  bringCash: ['You chose cash — pay an exec at the gym before you play.', 'Vous avez choisi comptant — payez un exec au gymnase avant de jouer.'],
+  yourTotal: ['Your total for {date}', 'Votre total pour {date}'],
+  waitlistNote: ['Full lists put you on the waitlist — if a spot opens you\'re moved up automatically and emailed.', 'Liste complète = liste d\'attente — si une place se libère, vous montez automatiquement et recevez un courriel.'],
+
+  /* promotion */
+  promotedEmailSent: ['{name} moved off the waitlist — email sent', '{name} a quitté la liste d\'attente — courriel envoyé'],
+  promotedEmailSim: ['{name} moved off the waitlist — email would be sent (demo)', '{name} a quitté la liste d\'attente — courriel simulé (démo)'],
+  promotedNoEmail: ['{name} moved off the waitlist (no email on file)', '{name} a quitté la liste d\'attente (pas de courriel)'],
+  promotedEmailFail: ['{name} moved up, but the email failed to send', '{name} a monté, mais l\'envoi du courriel a échoué'],
+
+  /* exec */
+  execAccess: ['Exec access', 'Accès exec'],
+  clubPin: ['Club PIN', 'NIP du club'],
+  unlock: ['Unlock', 'Déverrouiller'],
+  wrongPin: ['Wrong PIN', 'Mauvais NIP'],
+  execTools: ['Exec tools', 'Outils exec'],
+  newEvent: ['＋ New event', '＋ Nouvel événement'],
+  openSeason: ['Open the season', 'Ouvrir la saison'],
+  openSeasonConfirm: ['Create an event for every remaining Saturday until {end}? ({n} new dates, copied from the latest event)', 'Créer un événement pour chaque samedi restant jusqu\'au {end} ? ({n} nouvelles dates, copiées du dernier événement)'],
+  seasonOpened: ['{n} Saturdays opened', '{n} samedis ouverts'],
+  seasonComplete: ['Every Saturday until {end} is already open', 'Tous les samedis jusqu\'au {end} sont déjà ouverts'],
+  clubSettings: ['Club settings', 'Réglages du club'],
+  resetDemo: ['Reset demo data', 'Réinitialiser la démo'],
+  resetDemoConfirm: ['Reset all demo data back to the sample events?', 'Réinitialiser toutes les données de démo ?'],
+  demoReset: ['Demo data reset', 'Démo réinitialisée'],
+  weekRecord: ['Week by week', 'Semaine par semaine'],
+  players: ['players', 'joueurs'],
+  collected: ['collected', 'perçus'],
+  unpaid: ['unpaid', 'impayés'],
+  editEvent: ['Edit event', 'Modifier'],
+  payments: ['Payments', 'Paiements'],
+  exportCsv: ['Export CSV', 'Exporter CSV'],
+  closeSignups: ['Close sign-ups', 'Fermer les inscriptions'],
+  reopenSignups: ['Reopen sign-ups', 'Rouvrir les inscriptions'],
+  signupsClosed: ['Sign-ups closed', 'Inscriptions fermées'],
+  signupsReopened: ['Sign-ups reopened', 'Inscriptions rouvertes'],
+  addPlayer: ['＋ Add player', '＋ Ajouter un joueur'],
+  teams: ['Teams', 'Équipes'],
+  noTeams: ['None', 'Aucune'],
+  markPaid: ['Mark paid', 'Marquer payé'],
+  checkIn: ['Check in', 'Présent ?'],
+  checkedIn: ['Here ✓', 'Présent ✓'],
+  noInsta: ['no instagram', 'pas d\'instagram'],
+  noEmail: ['no email', 'pas de courriel'],
+  addedByExec: ['added by exec', 'ajouté par un exec'],
+  moveTo: ['Move to another list', 'Déplacer vers une autre liste'],
+  putInTeam: ['Team', 'Équipe'],
+  topOfList: ['⬆ Top of list', '⬆ Haut de la liste'],
+  moved: ['{name} moved', '{name} déplacé'],
+  movedTop: ['{name} moved to top', '{name} déplacé en haut'],
+  removeConfirm: ['Remove {name} from the list?', 'Retirer {name} de la liste ?'],
+  removed: ['{name} removed', '{name} retiré'],
+  nameOnly: ['Name *', 'Nom *'],
+  alreadyPaid: ['Already paid', 'Déjà payé'],
+  add: ['Add', 'Ajouter'],
+  added: ['{name} added', '{name} ajouté'],
+  nameReq: ['Name required', 'Nom requis'],
+
+  /* payments summary */
+  paymentsTitle: ['Payments — {date}', 'Paiements — {date}'],
+  outstanding: ['outstanding', 'à percevoir'],
+  notPaidYet: ['Not paid yet ({n})', 'Pas encore payé ({n})'],
+  everyonePaid: ['Everyone paid.', 'Tout le monde a payé.'],
+  paidList: ['Paid ({n})', 'Payé ({n})'],
+
+  /* event editor */
+  newEventTitle: ['New event', 'Nouvel événement'],
+  editEventTitle: ['Edit event', 'Modifier l\'événement'],
+  title: ['Title', 'Titre'],
+  date: ['Date', 'Date'],
+  location: ['Location', 'Lieu'],
+  slot1: ['Slot 1 label', 'Plage 1'],
+  slot2: ['Slot 2 label', 'Plage 2'],
+  lists: ['Lists', 'Listes'],
+  addList: ['＋ Add list', '＋ Ajouter une liste'],
+  bundleLabel: ['Bundle price (playing a sport in both slots)', 'Prix forfait (un sport dans les deux plages)'],
+  noBundle: ['No bundle', 'Aucun forfait'],
+  createEvent: ['Create event', 'Créer l\'événement'],
+  saveChanges: ['Save changes', 'Enregistrer'],
+  deleteBtn: ['Delete', 'Supprimer'],
+  pickDate: ['Pick a date', 'Choisissez une date'],
+  addOneList: ['Add at least one list', 'Ajoutez au moins une liste'],
+  eventCreated: ['Event created', 'Événement créé'],
+  eventSaved: ['Event saved', 'Événement enregistré'],
+  deleteEventConfirm: ['Delete this event and ALL its sign-ups? This cannot be undone.', 'Supprimer cet événement et TOUTES ses inscriptions ? Irréversible.'],
+  deleteEvent: ['Delete event', 'Supprimer l\'événement'],
+  eventDeleted: ['Event deleted', 'Événement supprimé'],
+  slotN: ['Slot {n}', 'Plage {n}'],
+  listCols: ['slot / sport / teams', 'plage / sport / équipes'],
+  listCols2: ['label · cap · e-transfer $ · cash $', 'nom · max · virement $ · comptant $'],
+  levelPh: ['Level / label', 'Niveau / nom'],
+
+  /* settings */
+  etransferEmailLbl: ['E-transfer email', 'Courriel de virement'],
+  defaultLocation: ['Default location', 'Lieu par défaut'],
+  instaHandle: ['Instagram handle', 'Compte Instagram'],
+  execPinLbl: ['Exec PIN', 'NIP exec'],
+  seasonEndLbl: ['Season end (last Saturday)', 'Fin de saison (dernier samedi)'],
+  lateFeeLbl: ['Late fee note', 'Note de frais de retard'],
+  policiesLbl: ['Policies (one per line)', 'Politiques (une par ligne)'],
+  settingsSaved: ['Settings saved', 'Réglages enregistrés'],
+
+  /* info box */
+  importantInfo: ['Important info', 'Infos importantes'],
+  locationLbl: ['Location:', 'Lieu :'],
+  paymentLbl: ['Payment:', 'Paiement :'],
+  paymentLine: ['Cash on site, or e-transfer to {email}', 'Comptant sur place ou virement Interac à {email}'],
+};
+
+export function t(key, vars = {}) {
+  const entry = STRINGS[key];
+  let s = entry ? entry[getLang() === 'fr' ? 1 : 0] : key;
+  for (const [k, v] of Object.entries(vars)) s = s.replaceAll('{' + k + '}', v);
+  return s;
+}

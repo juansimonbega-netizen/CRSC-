@@ -22,3 +22,25 @@
  * Full steps: see README.md at the root of this repository.
  */
 window.FIREBASE_CONFIG = null;
+
+/*
+ * EmailJS configuration — powers the automatic "you're off the waitlist"
+ * emails. Leave as `null` to skip sending (promotions still happen, the app
+ * just tells the exec no email went out).
+ *
+ * To enable:
+ *   1. Create a free account at https://www.emailjs.com (200 emails/month free).
+ *   2. Add an email service (e.g. the club Gmail) and note its Service ID.
+ *   3. Create a template using these variables:
+ *      {{to_email}} {{to_name}} {{event_date}} {{list_label}} {{session_label}}
+ *      {{location}} {{etransfer_email}} {{club_name}}
+ *      Set the template's "To email" field to {{to_email}}.
+ *   4. Fill in:
+ *
+ *      window.EMAILJS_CONFIG = {
+ *        publicKey: "your_public_key",
+ *        serviceId: "service_xxxxxxx",
+ *        templateId: "template_xxxxxxx",
+ *      };
+ */
+window.EMAILJS_CONFIG = null;

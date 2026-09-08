@@ -1,6 +1,8 @@
 import {
-  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday,
+  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday, saturdaysUntil,
 } from './store.js';
+import { t, getLang, setLang, locale } from './i18n.js';
+import { promotionCandidate, sendPromotionEmail } from './notify.js';
 
 /* ================================================================== */
 /* Small utilities                                                     */
@@ -19,7 +21,13 @@ function fmtDate(iso) {
   if (!iso) return '';
   const d = new Date(iso + 'T12:00:00');
   if (isNaN(d)) return iso;
-  return d.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' });
+  return d.toLocaleDateString(locale(), { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function fmtDateShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString(locale(), { month: 'short', day: 'numeric' });
 }
 
 function fmtMoney(n) {
@@ -27,15 +35,14 @@ function fmtMoney(n) {
 }
 
 function toast(msg, kind = 'ok') {
-  const t = document.createElement('div');
-  t.className = 'toast toast-' + kind;
-  t.textContent = msg;
-  $('#toasts').appendChild(t);
-  setTimeout(() => t.classList.add('show'), 10);
-  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3200);
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + kind;
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3200);
 }
 
-/* Modal helper: returns the overlay element. */
 function openModal(html, { wide = false } = {}) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -46,14 +53,14 @@ function openModal(html, { wide = false } = {}) {
   return overlay;
 }
 
-function confirmModal(message, confirmLabel = 'Confirm') {
+function confirmModal(message, confirmLabel) {
   return new Promise(resolve => {
     const ov = openModal(`
       <div class="modal-body">
         <p class="confirm-msg">${esc(message)}</p>
         <div class="row gap">
-          <button class="btn btn-ghost grow" data-close>Cancel</button>
-          <button class="btn btn-danger grow" id="cf-yes">${esc(confirmLabel)}</button>
+          <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+          <button class="btn btn-danger grow" id="cf-yes">${esc(confirmLabel || t('confirm'))}</button>
         </div>
       </div>`);
     $('#cf-yes', ov).addEventListener('click', () => { ov.remove(); resolve(true); });
@@ -79,7 +86,6 @@ function setExec(on) {
   else sessionStorage.removeItem('crsc-exec');
 }
 
-/* Downscale a chosen image file to a small square thumbnail data URL. */
 function fileToThumb(file, size = 128) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -128,6 +134,13 @@ function mySignups(eventId) {
   return eventSignups(eventId).filter(s => s.deviceId === DEVICE);
 }
 
+function listById(event, listId) {
+  return (event.lists || []).find(l => l.id === listId);
+}
+function sessionById(event, sessionId) {
+  return (event.sessions || []).find(s => s.id === sessionId);
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -139,13 +152,6 @@ function isPastEvent(ev) {
 
 function isEventOpen(ev) {
   return ev.status === 'open' && !isPastEvent(ev);
-}
-
-function listById(event, listId) {
-  return (event.lists || []).find(l => l.id === listId);
-}
-function sessionById(event, sessionId) {
-  return (event.sessions || []).find(s => s.id === sessionId);
 }
 
 /*
@@ -188,22 +194,93 @@ function pricesSummary(ev) {
   const parts = [];
   for (const l of ev.lists || []) {
     const sport = SPORTS[l.sport] || SPORTS.other;
-    const price = `${fmtMoney(l.priceE ?? 0)}${(l.priceC ?? l.priceE) !== l.priceE ? ` (${fmtMoney(l.priceC)} cash)` : ''}`;
+    const price = `${fmtMoney(l.priceE ?? 0)}${(l.priceC ?? l.priceE) !== l.priceE ? ` (${fmtMoney(l.priceC)} ${t('cash')})` : ''}`;
     const key = l.sport + '|' + price;
     if (seen.has(key)) continue;
     seen.add(key);
-    parts.push(`${sport.emoji} ${esc(sport.label)} <strong>${price}</strong>`);
+    parts.push(`${esc(sport.label)} <strong>${price}</strong>`);
   }
   for (const b of ev.bundles || []) {
     const sport = SPORTS[b.sport] || SPORTS.other;
-    parts.push(`${sport.emoji} both slots <strong>${fmtMoney(b.priceE ?? 0)}</strong>`);
+    parts.push(`${esc(sport.label)} ${t('bothSlots')} <strong>${fmtMoney(b.priceE ?? 0)}</strong>`);
   }
-  return parts.join(' · ');
+  return parts.join('&ensp;·&ensp;');
 }
 
-/* Expected amount for one person's existing signups (used by exec summary). */
 function personKey(s) {
   return s.deviceId !== 'exec-added' && s.deviceId ? s.deviceId + '|' + s.name.toLowerCase() : 'name|' + s.name.toLowerCase();
+}
+
+function personTotals(ev) {
+  const persons = {};
+  for (const su of eventSignups(ev.id)) {
+    const k = personKey(su);
+    if (!persons[k]) persons[k] = { name: su.name, insta: su.insta, method: su.method, signups: [] };
+    persons[k].signups.push(su);
+  }
+  return Object.values(persons).map(p => {
+    const { total } = computePrice(ev, p.signups.map(x => x.listId), p.method);
+    return { ...p, total, paid: p.signups.every(x => x.paid), checkedIn: p.signups.some(x => x.checkedIn) };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* ================================================================== */
+/* Waitlist promotion (automatic, with email)                          */
+/* ================================================================== */
+
+/*
+ * Call BEFORE `leaving` is removed/moved out of its list. Figures out who
+ * crosses from the waitlist into the confirmed group, then (after the
+ * mutation) emails them and records it on their signup.
+ */
+function prePromotion(ev, leaving) {
+  const l = listById(ev, leaving.listId);
+  if (!l) return null;
+  const entries = listEntries(ev.id, leaving.listId);
+  const cand = promotionCandidate(entries, l.cap || 0, leaving);
+  return cand ? { cand, list: l } : null;
+}
+
+async function notifyPromotion(ev, promo) {
+  if (!promo) return;
+  const { cand, list } = promo;
+  const sess = sessionById(ev, list.sessionId);
+  try {
+    if (store.mode === 'demo' || !window.EMAILJS_CONFIG) {
+      if (cand.email) toast(t('promotedEmailSim', { name: cand.name }));
+      else toast(t('promotedNoEmail', { name: cand.name }));
+      await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: !!cand.email });
+      return;
+    }
+    const r = await sendPromotionEmail({
+      signup: cand, event: ev,
+      listLabel: `${SPORTS[list.sport]?.label || list.sport} — ${list.label}`,
+      sessionLabel: sess ? sess.label : '',
+      settings: state.settings,
+    });
+    if (r.sent) {
+      toast(t('promotedEmailSent', { name: cand.name }));
+      await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: true });
+    } else {
+      toast(t('promotedNoEmail', { name: cand.name }));
+      await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: false });
+    }
+  } catch (err) {
+    console.error('promotion email', err);
+    toast(t('promotedEmailFail', { name: cand.name }), 'err');
+  }
+}
+
+async function removeSignup(ev, su) {
+  const promo = prePromotion(ev, su);
+  await store.deleteSignup(ev.id, su.id);
+  await notifyPromotion(ev, promo);
+}
+
+async function moveSignup(ev, su, newListId) {
+  const promo = prePromotion(ev, su);
+  await store.updateSignup(ev.id, su.id, { listId: newListId, team: null, order: Date.now() });
+  await notifyPromotion(ev, promo);
 }
 
 /* ================================================================== */
@@ -223,7 +300,7 @@ function render() {
   if (r.view === 'event') {
     const ev = state.events.find(e => e.id === r.eventId);
     if (ev) { store.watchEvent(ev.id); renderEvent(ev); }
-    else $('#view').innerHTML = `<div class="empty">Event not found. <a href="#/">Back home</a></div>`;
+    else $('#view').innerHTML = `<div class="empty">${esc(t('notFound'))} <a href="#/">${esc(t('backHome'))}</a></div>`;
   } else {
     renderHome();
   }
@@ -231,83 +308,152 @@ function render() {
 
 function renderHeader() {
   const s = state.settings;
+  const other = getLang() === 'fr' ? 'EN' : 'FR';
   $('#header').innerHTML = `
     <a class="brand" href="#/">
-      <span class="brand-badge">🏐</span>
-      <span>
-        <strong>${esc(s.clubName || 'CRSC')}</strong>
-        <small>${esc(s.clubFullName || '')}</small>
-      </span>
+      <span class="brand-mark">CRSC</span>
+      <span class="brand-sub">${esc(s.clubFullName || '')}</span>
     </a>
     <div class="header-actions">
-      ${store.mode === 'demo' ? '<span class="chip chip-demo" title="Running without Firebase — data stays on this device">DEMO</span>' : ''}
+      ${store.mode === 'demo' ? `<span class="chip chip-demo" title="${esc(t('demoTitle'))}">DEMO</span>` : ''}
+      <button class="btn btn-tiny btn-ghost" id="btn-lang">${other}</button>
       ${isExec()
-        ? `<button class="btn btn-small btn-exec" id="btn-exec-off">Exec ✓</button>`
-        : `<button class="btn btn-small btn-ghost" id="btn-exec-on">Exec</button>`}
+        ? `<button class="btn btn-small btn-exec" id="btn-exec-off">${esc(t('execOnBtn'))}</button>`
+        : `<button class="btn btn-small btn-ghost" id="btn-exec-on">${esc(t('execBtn'))}</button>`}
     </div>`;
+  $('#btn-lang').addEventListener('click', () => {
+    setLang(getLang() === 'fr' ? 'en' : 'fr');
+    render();
+  });
   const on = $('#btn-exec-on');
   if (on) on.addEventListener('click', openPinModal);
   const off = $('#btn-exec-off');
-  if (off) off.addEventListener('click', () => { setExec(false); toast('Exec mode off'); render(); });
+  if (off) off.addEventListener('click', () => { setExec(false); toast(t('execModeOff')); render(); });
 }
 
 /* ================================================================== */
-/* Home view                                                           */
+/* Home: season calendar                                               */
 /* ================================================================== */
 
-function eventCard(ev, { record = false } = {}) {
-  const sports = [...new Set((ev.lists || []).map(l => l.sport))];
-  const total = eventSignups(ev.id).length;
-  const capTotal = (ev.lists || []).reduce((a, l) => a + (l.cap || 0), 0);
-  const mine = mySignups(ev.id);
-  const open = isEventOpen(ev);
-  const soon = ev.date === nextSaturday() || ev.date === todayStr();
+function calDayState(ev) {
+  if (isPastEvent(ev)) return 'past';
+  if (ev.status !== 'open') return 'closed';
+  const anySpace = (ev.lists || []).some(l => listEntries(ev.id, l.id).length < (l.cap || 0));
+  return anySpace ? 'open' : 'full';
+}
 
-  let recordLine = '';
-  if (record) {
-    const people = personTotals(ev);
-    const collected = people.filter(p => p.paid).reduce((a, p) => a + p.total, 0);
-    const outstanding = people.filter(p => !p.paid).reduce((a, p) => a + p.total, 0);
-    recordLine = `<div class="event-record">${people.length} players · <span class="rec-good">${fmtMoney(collected)} collected</span>${outstanding ? ` · <span class="rec-bad">${fmtMoney(outstanding)} unpaid</span>` : ''}</div>`;
+function renderCalendar() {
+  const end = state.settings.seasonEnd || nextSaturday(12);
+  const byDate = {};
+  for (const ev of state.events) if (ev.date) byDate[ev.date] = ev;
+
+  const startM = new Date(); startM.setDate(1);
+  const endM = new Date(end + 'T12:00:00');
+  const months = [];
+  const cur = new Date(startM);
+  while (cur.getFullYear() < endM.getFullYear() || (cur.getFullYear() === endM.getFullYear() && cur.getMonth() <= endM.getMonth())) {
+    months.push(new Date(cur));
+    cur.setMonth(cur.getMonth() + 1);
+    if (months.length > 12) break;
   }
 
-  return `
-    <a class="card event-card ${!open ? 'event-closed' : ''}" href="#/event/${esc(ev.id)}">
-      <div class="event-card-top">
-        <div>
-          <div class="event-date">${esc(fmtDate(ev.date))}</div>
-          <div class="event-title">${esc(ev.title || '')}</div>
+  const dow = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(2026, 1, i + 1); // Feb 1 2026 is a Sunday
+    dow.push(d.toLocaleDateString(locale(), { weekday: 'narrow' }));
+  }
+
+  const monthsHtml = months.map(m => {
+    const y = m.getFullYear(), mo = m.getMonth();
+    const daysInMonth = new Date(y, mo + 1, 0).getDate();
+    const offset = new Date(y, mo, 1).getDay();
+    let cells = '';
+    for (let i = 0; i < offset; i++) cells += '<span class="cal-day cal-blank"></span>';
+    for (let day = 1; day <= daysInMonth; day++) {
+      const iso = `${y}-${String(mo + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const ev = byDate[iso];
+      if (ev) {
+        const st = calDayState(ev);
+        const mine = mySignups(ev.id).length > 0;
+        cells += `<a class="cal-day cal-sat is-${st} ${mine ? 'is-mine' : ''}" href="#/event/${esc(ev.id)}">${day}</a>`;
+      } else {
+        cells += `<span class="cal-day">${day}</span>`;
+      }
+    }
+    return `
+      <div class="cal-month">
+        <div class="cal-month-name">${esc(m.toLocaleDateString(locale(), { month: 'long', year: 'numeric' }))}</div>
+        <div class="cal-grid">
+          ${dow.map(d => `<span class="cal-dow">${esc(d)}</span>`).join('')}
+          ${cells}
         </div>
-        ${!open ? `<span class="chip chip-muted">${isPastEvent(ev) ? 'Past' : 'Closed'}</span>` : (soon ? '<span class="chip chip-soon">This Saturday</span>' : '')}
-      </div>
-      <div class="event-sports">${sports.map(sp => `<span class="chip" style="--c:${SPORTS[sp]?.color || '#888'}">${SPORTS[sp]?.emoji || ''} ${esc(SPORTS[sp]?.label || sp)}</span>`).join('')}</div>
-      <div class="event-meta">
-        <span>${total} signed up${capTotal && open ? ` · ${capTotal} spots` : ''}</span>
-        ${mine.length ? `<span class="chip chip-mine">You're in ✓</span>` : ''}
-      </div>
-      ${recordLine}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="cal-months">${monthsHtml}</div>
+    <div class="cal-legend">
+      <span><i class="dot dot-open"></i>${esc(t('legendOpen'))}</span>
+      <span><i class="dot dot-full"></i>${esc(t('legendFull'))}</span>
+      <span><i class="dot dot-mine"></i>${esc(t('legendMine'))}</span>
+    </div>`;
+}
+
+function avatarHtml(p, size = '') {
+  if (p.photo) return `<img class="avatar ${size}" src="${p.photo}" alt="">`;
+  const initial = (p.name || '?').trim().charAt(0).toUpperCase();
+  return `<span class="avatar avatar-letter ${size}">${esc(initial)}</span>`;
+}
+
+function myGamesHtml() {
+  const items = [];
+  for (const ev of state.events) {
+    if (isPastEvent(ev)) continue;
+    for (const m of mySignups(ev.id)) {
+      const l = listById(ev, m.listId);
+      items.push({ ev, m, l });
+    }
+  }
+  if (!items.length) return '';
+  items.sort((a, b) => (a.ev.date > b.ev.date ? 1 : -1));
+  return `
+    <h2 class="section-title">${esc(t('yourGames'))}</h2>
+    <div class="card my-games">
+      ${items.map(({ ev, m, l }) => `
+        <a class="my-game" href="#/event/${esc(ev.id)}">
+          <span class="my-game-date">${esc(fmtDateShort(ev.date))}</span>
+          <span class="grow">${esc(SPORTS[l?.sport]?.label || '')} — ${esc(l?.label || '?')}</span>
+          ${m.paid ? `<span class="chip chip-paid">${esc(t('paid'))}</span>` : `<span class="chip chip-unpaid">${esc(m.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`}
+        </a>`).join('')}
+    </div>`;
+}
+
+function weekRecordCard(ev) {
+  const people = personTotals(ev);
+  const collected = people.filter(p => p.paid).reduce((a, p) => a + p.total, 0);
+  const outstanding = people.filter(p => !p.paid).reduce((a, p) => a + p.total, 0);
+  return `
+    <a class="record-row" href="#/event/${esc(ev.id)}">
+      <span class="record-date">${esc(fmtDateShort(ev.date))}</span>
+      <span class="grow">${people.length} ${esc(t('players'))}</span>
+      <span class="rec-good">${fmtMoney(collected)} ${esc(t('collected'))}</span>
+      ${outstanding ? `<span class="rec-bad">${fmtMoney(outstanding)} ${esc(t('unpaid'))}</span>` : ''}
     </a>`;
 }
 
 function renderHome() {
   const exec = isExec();
-  const upcoming = state.events
-    .filter(isEventOpen)
-    .sort((a, b) => (a.date > b.date ? 1 : -1));
-  const past = state.events
-    .filter(e => !isEventOpen(e))
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
-  // Keep every week's lists and payments live: watch upcoming Saturdays for
-  // everyone, and recent past weeks for the exec records.
-  upcoming.forEach(e => store.watchEvent(e.id));
-  if (exec) past.slice(0, 12).forEach(e => store.watchEvent(e.id));
   const s = state.settings;
   const profile = getProfile();
+  const upcoming = state.events.filter(e => !isPastEvent(e));
+  const past = state.events.filter(isPastEvent).sort((a, b) => (a.date < b.date ? 1 : -1));
+  upcoming.forEach(e => store.watchEvent(e.id));
+  if (exec) past.slice(0, 12).forEach(e => store.watchEvent(e.id));
 
   $('#view').innerHTML = `
     <section class="hero">
-      <h1>Saturday drop-in sports</h1>
-      <p>Sign up, show up, play. Volleyball · Basketball · Football</p>
+      <h1>${esc(t('heroTitle'))}</h1>
+      <p>${esc(t('tagline'))}</p>
     </section>
 
     ${profile ? `
@@ -317,52 +463,64 @@ function renderHome() {
           <strong>${esc(profile.name)}</strong>
           ${profile.insta ? `<small>@${esc(profile.insta)}</small>` : ''}
         </div>
-        <button class="btn btn-small btn-ghost" id="btn-edit-profile">Edit</button>
+        <button class="btn btn-small btn-ghost" id="btn-edit-profile">${esc(t('edit'))}</button>
       </div>` : ''}
 
-    <h2 class="section-title">Choose your Saturday</h2>
-    ${upcoming.length ? upcoming.map(e => eventCard(e)).join('') : `<div class="empty">No open events right now. Check back soon, or follow <a href="https://instagram.com/${esc(s.instagram || '')}" target="_blank" rel="noopener">@${esc(s.instagram || '')}</a>.</div>`}
+    <h2 class="section-title">${esc(t('chooseSaturday'))}</h2>
+    <p class="hint">${esc(t('calendarHint', { end: fmtDate(s.seasonEnd || '') }))}</p>
+    ${upcoming.length
+      ? renderCalendar()
+      : `<div class="empty">${t('noEvents', { insta: `<a href="https://instagram.com/${esc(s.instagram || '')}" target="_blank" rel="noopener">@${esc(s.instagram || '')}</a>` })}</div>`}
+
+    ${myGamesHtml()}
 
     ${exec ? `
       <div class="exec-panel">
-        <h2 class="section-title">Exec tools</h2>
+        <h2 class="section-title">${esc(t('execTools'))}</h2>
         <div class="row gap wrap">
-          <button class="btn btn-primary" id="btn-new-event">＋ New event</button>
-          ${state.events.length ? `<button class="btn btn-ghost" id="btn-dup-event">＋ Next Saturday (copy latest)</button>` : ''}
-          <button class="btn btn-ghost" id="btn-settings">Club settings</button>
-          ${store.mode === 'demo' ? `<button class="btn btn-ghost" id="btn-reset-demo">Reset demo data</button>` : ''}
+          <button class="btn btn-primary" id="btn-new-event">${esc(t('newEvent'))}</button>
+          ${state.events.length ? `<button class="btn btn-ghost" id="btn-season">${esc(t('openSeason'))}</button>` : ''}
+          <button class="btn btn-ghost" id="btn-settings">${esc(t('clubSettings'))}</button>
+          ${store.mode === 'demo' ? `<button class="btn btn-ghost" id="btn-reset-demo">${esc(t('resetDemo'))}</button>` : ''}
         </div>
-        ${past.length ? `<h3 class="section-sub">Week by week record</h3>${past.map(e => eventCard(e, { record: true })).join('')}` : ''}
+        ${past.length ? `<h3 class="section-sub">${esc(t('weekRecord'))}</h3><div class="card record-card">${past.map(weekRecordCard).join('')}</div>` : ''}
       </div>` : ''}
 
     <footer class="info-box">
-      <h3>Important info</h3>
-      <p><strong>📍 Location:</strong> ${esc(s.location || '')}</p>
-      <p><strong>💸 Payment:</strong> Cash on site, or e-transfer to <strong>${esc(s.etransferEmail || '')}</strong></p>
+      <h3>${esc(t('importantInfo'))}</h3>
+      <p><strong>${esc(t('locationLbl'))}</strong> ${esc(s.location || '')}</p>
+      <p><strong>${esc(t('paymentLbl'))}</strong> ${esc(t('paymentLine', { email: s.etransferEmail || '' }))}</p>
       <ul>${(s.policies || []).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-      <p class="late-fee">⚠️ ${esc(s.lateFeeNote || '')}</p>
+      <p class="late-fee">${esc(s.lateFeeNote || '')}</p>
     </footer>`;
 
-  const ep = $('#btn-edit-profile');
-  if (ep) ep.addEventListener('click', () => openProfileModal());
-  const ne = $('#btn-new-event');
-  if (ne) ne.addEventListener('click', () => openEventEditor(null));
-  const de = $('#btn-dup-event');
-  if (de) de.addEventListener('click', duplicateLatestEvent);
-  const st = $('#btn-settings');
-  if (st) st.addEventListener('click', openSettingsModal);
-  const rd = $('#btn-reset-demo');
-  if (rd) rd.addEventListener('click', async () => {
-    if (await confirmModal('Reset all demo data back to the sample event?', 'Reset')) {
-      store.resetDemo(); toast('Demo data reset');
+  $('#btn-edit-profile')?.addEventListener('click', () => openProfileModal());
+  $('#btn-new-event')?.addEventListener('click', () => openEventEditor(null));
+  $('#btn-season')?.addEventListener('click', openSeason);
+  $('#btn-settings')?.addEventListener('click', openSettingsModal);
+  $('#btn-reset-demo')?.addEventListener('click', async () => {
+    if (await confirmModal(t('resetDemoConfirm'))) {
+      store.resetDemo(); toast(t('demoReset'));
     }
   });
 }
 
-function avatarHtml(p, size = '') {
-  if (p.photo) return `<img class="avatar ${size}" src="${p.photo}" alt="">`;
-  const initial = (p.name || '?').trim().charAt(0).toUpperCase();
-  return `<span class="avatar avatar-letter ${size}">${esc(initial)}</span>`;
+/* Create an event for every remaining Saturday until seasonEnd. */
+async function openSeason() {
+  const end = state.settings.seasonEnd || nextSaturday(12);
+  const have = new Set(state.events.map(e => e.date));
+  const missing = saturdaysUntil(end).filter(d => !have.has(d));
+  if (!missing.length) { toast(t('seasonComplete', { end: fmtDate(end) })); return; }
+  if (!await confirmModal(t('openSeasonConfirm', { end: fmtDate(end), n: missing.length }), t('openSeason'))) return;
+  const src = [...state.events].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  for (const date of missing) {
+    const copy = src
+      ? { ...JSON.parse(JSON.stringify(src)), id: uid('ev'), date, status: 'open', createdAt: Date.now() }
+      : makeTemplateEvent(date, 'Saturday Drop-in');
+    copy.lists = copy.lists.map(l => ({ ...l, id: uid('l') }));
+    await store.saveEvent(copy);
+  }
+  toast(t('seasonOpened', { n: missing.length }));
 }
 
 /* ================================================================== */
@@ -370,8 +528,8 @@ function avatarHtml(p, size = '') {
 /* ================================================================== */
 
 function paymentChip(s) {
-  if (s.paid) return `<span class="chip chip-paid">Paid ✓</span>`;
-  return `<span class="chip chip-unpaid">${s.method === 'cash' ? 'Cash on site' : 'E-transfer'} · unpaid</span>`;
+  if (s.paid) return `<span class="chip chip-paid">${esc(t('paid'))}</span>`;
+  return `<span class="chip chip-unpaid">${esc(s.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`;
 }
 
 function entryRow(ev, s, { waitlistPos = null, exec = false } = {}) {
@@ -380,13 +538,37 @@ function entryRow(ev, s, { waitlistPos = null, exec = false } = {}) {
     <div class="entry ${mine ? 'entry-mine' : ''} ${exec ? 'entry-clickable' : ''}" ${exec ? `data-signup="${esc(s.id)}"` : ''}>
       ${avatarHtml(s, 'avatar-sm')}
       <div class="grow entry-name">
-        <span>${esc(s.name)} ${mine ? '<em>(you)</em>' : ''}</span>
+        <span>${esc(s.name)} ${mine ? `<em>${esc(t('you'))}</em>` : ''}</span>
         ${s.insta ? `<small>@${esc(s.insta)}</small>` : ''}
       </div>
-      ${waitlistPos !== null ? `<span class="chip chip-wl">WL #${waitlistPos}</span>` : ''}
-      ${exec ? `${s.checkedIn ? '<span class="chip chip-in">Here</span>' : ''}${paymentChip(s)}` : (mine ? paymentChip(s) : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
-      ${mine && !exec ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="Remove my name">✕</button>` : ''}
+      ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
+      ${exec ? `${s.checkedIn ? `<span class="chip chip-in">${esc(t('here'))}</span>` : ''}${paymentChip(s)}` : (mine ? paymentChip(s) : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
+      ${mine && !exec ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
+}
+
+/* Confirmed entries, grouped into teams when the list has them. */
+function confirmedHtml(ev, l, confirmed, exec) {
+  if (!confirmed.length) return `<div class="empty-list">${esc(t('beFirst'))}</div>`;
+  const teamCount = l.teamCount || 0;
+  const anyAssigned = confirmed.some(e => e.team);
+  if (!teamCount || !anyAssigned) {
+    return confirmed.map(e => entryRow(ev, e, { exec })).join('')
+      + (teamCount && !anyAssigned ? `<div class="hint team-hint">${esc(t('noTeamYet'))}</div>` : '');
+  }
+  let html = '';
+  for (let n = 1; n <= teamCount; n++) {
+    const members = confirmed.filter(e => e.team === n);
+    if (!members.length) continue;
+    html += `<div class="team-divider">${esc(t('team', { n }))}</div>`;
+    html += members.map(e => entryRow(ev, e, { exec })).join('');
+  }
+  const rest = confirmed.filter(e => !e.team || e.team > teamCount);
+  if (rest.length) {
+    html += `<div class="team-divider team-unassigned">${esc(t('unassigned'))}</div>`;
+    html += rest.map(e => entryRow(ev, e, { exec })).join('');
+  }
+  return html;
 }
 
 function renderEvent(ev) {
@@ -400,7 +582,7 @@ function renderEvent(ev) {
     if (!lists.length) return '';
     return `
       <section class="session">
-        <h2 class="session-title">🕐 ${esc(sess.label)}</h2>
+        <h2 class="session-title">${esc(sess.label)}</h2>
         <div class="lists-grid">
           ${lists.map(l => {
             const entries = listEntries(ev.id, l.id);
@@ -417,14 +599,23 @@ function renderEvent(ev) {
                 </div>
                 <div class="list-cap">
                   <div class="capbar"><div class="capbar-fill ${full ? 'full' : ''}" style="width:${l.cap ? Math.min(100, confirmed.length / l.cap * 100) : 0}%"></div></div>
-                  <span class="cap-text">${confirmed.length}/${l.cap || 0}${full ? ' · FULL' : ` · ${spotsLeft} left`}</span>
+                  <span class="cap-text">${confirmed.length}/${l.cap || 0}${full ? ` · ${esc(t('full'))}` : ` · ${esc(t('spotsLeft', { n: spotsLeft }))}`}</span>
                 </div>
                 <div class="entries">
-                  ${confirmed.map(e => entryRow(ev, e, { exec })).join('') || '<div class="empty-list">No one yet — be first!</div>'}
-                  ${waitlist.length ? `<div class="wl-divider">Waitlist</div>${waitlist.map((e, i) => entryRow(ev, e, { waitlistPos: i + 1, exec })).join('')}` : ''}
+                  ${confirmedHtml(ev, l, confirmed, exec)}
+                  ${waitlist.length ? `<div class="wl-divider">${esc(t('waitlist'))}</div>${waitlist.map((e, i) => entryRow(ev, e, { waitlistPos: i + 1, exec })).join('')}` : ''}
                 </div>
-                ${isOpen && !iAmIn ? `<button class="btn ${full ? 'btn-ghost' : 'btn-primary'} btn-join" data-join="${esc(l.id)}">${full ? 'Join waitlist' : 'Join'}</button>` : ''}
-                ${exec ? `<button class="btn btn-tiny btn-ghost" data-exec-add="${esc(l.id)}">＋ Add player</button>` : ''}
+                ${isOpen && !iAmIn ? `<button class="btn ${full ? 'btn-ghost' : 'btn-primary'} btn-join" data-join="${esc(l.id)}">${esc(full ? t('joinWaitlist') : t('join'))}</button>` : ''}
+                ${exec ? `
+                  <div class="row gap exec-list-tools">
+                    <button class="btn btn-tiny btn-ghost" data-exec-add="${esc(l.id)}">${esc(t('addPlayer'))}</button>
+                    <label class="teams-ctl">${esc(t('teams'))}
+                      <select data-teams="${esc(l.id)}">
+                        <option value="0" ${!l.teamCount ? 'selected' : ''}>${esc(t('noTeams'))}</option>
+                        ${[2, 3, 4, 6].map(n => `<option value="${n}" ${l.teamCount === n ? 'selected' : ''}>${n}</option>`).join('')}
+                      </select>
+                    </label>
+                  </div>` : ''}
               </div>`;
           }).join('')}
         </div>
@@ -432,32 +623,32 @@ function renderEvent(ev) {
   }).join('');
 
   $('#view').innerHTML = `
-    <a class="back" href="#/">← All events</a>
+    <a class="back" href="#/">${esc(t('back'))}</a>
     <div class="event-head card">
       <div class="row gap wrap">
         <div class="grow">
           <h1 class="event-h1">${esc(fmtDate(ev.date))}</h1>
-          <div class="event-sub">${esc(ev.title || '')} · ${esc(ev.location || s.location || '')}</div>
+          <div class="event-sub">${esc(ev.location || s.location || '')}</div>
           <div class="event-prices">${pricesSummary(ev)}</div>
         </div>
-        ${!isOpen ? `<span class="chip chip-muted">${isPastEvent(ev) ? 'Past event' : 'Closed'}</span>` : ''}
+        ${!isOpen ? `<span class="chip chip-muted">${esc(isPastEvent(ev) ? t('pastEvent') : t('closed'))}</span>` : ''}
       </div>
       ${mine.length ? `
         <div class="my-spots">
-          <strong>Your spots:</strong>
+          <strong>${esc(t('yourSpots'))}</strong>
           ${mine.map(m => {
             const l = listById(ev, m.listId);
             const sess = l ? sessionById(ev, l.sessionId) : null;
-            return `<span class="chip chip-mine">${SPORTS[l?.sport]?.emoji || ''} ${esc(l ? l.label : '?')}${sess ? ' · ' + esc(sess.label) : ''}</span>`;
+            return `<span class="chip chip-mine">${esc(SPORTS[l?.sport]?.label || '')} ${esc(l ? l.label : '?')}${sess ? ' · ' + esc(sess.label) : ''}</span>`;
           }).join('')}
-          ${mine.some(m => !m.paid) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">How to pay</button>` : '<span class="chip chip-paid">All paid ✓</span>'}
+          ${mine.some(m => !m.paid) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : `<span class="chip chip-paid">${esc(t('allPaid'))}</span>`}
         </div>` : ''}
       ${exec ? `
         <div class="row gap wrap exec-toolbar">
-          <button class="btn btn-small btn-ghost" id="btn-edit-event">Edit event</button>
-          <button class="btn btn-small btn-ghost" id="btn-summary">💰 Payments</button>
-          <button class="btn btn-small btn-ghost" id="btn-csv">Export CSV</button>
-          <button class="btn btn-small btn-ghost" id="btn-toggle-open">${isOpen ? 'Close sign-ups' : 'Reopen sign-ups'}</button>
+          <button class="btn btn-small btn-ghost" id="btn-edit-event">${esc(t('editEvent'))}</button>
+          <button class="btn btn-small btn-ghost" id="btn-summary">${esc(t('payments'))}</button>
+          <button class="btn btn-small btn-ghost" id="btn-csv">${esc(t('exportCsv'))}</button>
+          <button class="btn btn-small btn-ghost" id="btn-toggle-open">${esc(isOpen ? t('closeSignups') : t('reopenSignups'))}</button>
         </div>` : ''}
     </div>
     ${sessionsHtml}
@@ -471,13 +662,12 @@ function renderEvent(ev) {
     e.preventDefault();
     const su = eventSignups(ev.id).find(x => x.id === b.dataset.cancel);
     if (!su) return;
-    if (await confirmModal(`Remove ${su.name} from this list?`, 'Remove me')) {
-      await store.deleteSignup(ev.id, su.id);
-      toast('You were removed from the list');
+    if (await confirmModal(t('removeSelfConfirm', { name: su.name }), t('removeMe'))) {
+      await removeSignup(ev, su);
+      toast(t('removedSelf'));
     }
   }));
-  const hp = $('#btn-how-pay');
-  if (hp) hp.addEventListener('click', () => openPayInfoModal(ev));
+  $('#btn-how-pay')?.addEventListener('click', () => openPayInfoModal(ev));
 
   if (exec) {
     $$('[data-signup]').forEach(row => row.addEventListener('click', e => {
@@ -486,30 +676,38 @@ function renderEvent(ev) {
       if (su) openPlayerAdminModal(ev, su);
     }));
     $$('[data-exec-add]').forEach(b => b.addEventListener('click', () => openExecAddModal(ev, b.dataset.execAdd)));
+    $$('[data-teams]').forEach(sel => sel.addEventListener('change', async () => {
+      const lists = ev.lists.map(l => l.id === sel.dataset.teams ? { ...l, teamCount: +sel.value } : l);
+      await store.saveEvent({ ...ev, lists });
+    }));
     $('#btn-edit-event')?.addEventListener('click', () => openEventEditor(ev));
     $('#btn-summary')?.addEventListener('click', () => openSummaryModal(ev));
     $('#btn-csv')?.addEventListener('click', () => exportCsv(ev));
     $('#btn-toggle-open')?.addEventListener('click', async () => {
       await store.saveEvent({ ...ev, status: isOpen ? 'closed' : 'open' });
-      toast(isOpen ? 'Sign-ups closed' : 'Sign-ups reopened');
+      toast(isOpen ? t('signupsClosed') : t('signupsReopened'));
     });
   }
 }
 
 /* ================================================================== */
-/* Join flow                                                           */
+/* Profile + join flow                                                 */
 /* ================================================================== */
 
 function profileFieldsHtml(p) {
   return `
     <div class="row gap center">
-      <label class="avatar-pick" title="Add a photo (optional)">
-        <span id="pf-avatar">${p ? avatarHtml(p) : '<span class="avatar avatar-letter">📷</span>'}</span>
+      <label class="avatar-pick" title="${esc(t('addPhoto'))}">
+        <span id="pf-avatar">${p ? avatarHtml(p) : '<span class="avatar avatar-letter">+</span>'}</span>
         <input type="file" accept="image/*" id="pf-photo" hidden>
       </label>
       <div class="grow stack">
-        <input class="input" id="pf-name" placeholder="Your name *" value="${esc(p?.name || '')}" maxlength="40">
-        <input class="input" id="pf-insta" placeholder="Instagram (optional, no @)" value="${esc(p?.insta || '')}" maxlength="40">
+        <input class="input" id="pf-name" placeholder="${esc(t('namePh'))}" value="${esc(p?.name || '')}" maxlength="40">
+        <input class="input" id="pf-email" type="email" placeholder="${esc(t('emailPh'))}" value="${esc(p?.email || '')}" maxlength="80">
+        <div class="row gap">
+          <input class="input" id="pf-phone" type="tel" placeholder="${esc(t('phonePh'))}" value="${esc(p?.phone || '')}" maxlength="20">
+          <input class="input" id="pf-insta" placeholder="${esc(t('instaPh'))}" value="${esc(p?.insta || '')}" maxlength="40">
+        </div>
       </div>
     </div>`;
 }
@@ -524,27 +722,30 @@ function wireProfileFields(ov, existing) {
     try {
       pendingPhoto = await fileToThumb(f);
       $('#pf-avatar', ov).innerHTML = `<img class="avatar" src="${pendingPhoto}" alt="">`;
-    } catch (err) { toast('Could not read that image', 'err'); }
+    } catch (err) { toast(t('badImage'), 'err'); }
   });
 }
 
 function readProfileFields(ov) {
   const name = $('#pf-name', ov).value.trim();
+  const email = $('#pf-email', ov).value.trim();
+  const phone = $('#pf-phone', ov).value.trim();
   const insta = $('#pf-insta', ov).value.trim().replace(/^@/, '');
-  if (!name) { toast('Please enter your name', 'err'); return null; }
-  return { name, insta, photo: pendingPhoto || '' };
+  if (!name) { toast(t('nameRequired'), 'err'); return null; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast(t('emailRequired'), 'err'); return null; }
+  return { name, email, phone, insta, photo: pendingPhoto || '' };
 }
 
 function openProfileModal() {
   const p = getProfile();
   const ov = openModal(`
     <div class="modal-body">
-      <h2>Your profile</h2>
-      <p class="hint">Saved on this device so next week is one tap.</p>
+      <h2>${esc(t('yourProfile'))}</h2>
+      <p class="hint">${esc(t('profileHint'))}</p>
       ${profileFieldsHtml(p)}
       <div class="row gap">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        <button class="btn btn-primary grow" id="pf-save">Save</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="pf-save">${esc(t('save'))}</button>
       </div>
     </div>`);
   wireProfileFields(ov, p);
@@ -552,7 +753,7 @@ function openProfileModal() {
     const np = readProfileFields(ov);
     if (!np) return;
     saveProfile(np);
-    ov.remove(); toast('Profile saved'); render();
+    ov.remove(); toast(t('profileSaved')); render();
   });
 }
 
@@ -574,8 +775,8 @@ function openJoinSheet(ev, preselectedListId) {
           return `
             <label class="join-list ${full ? 'join-full' : ''}">
               <input type="checkbox" data-list="${esc(l.id)}" ${l.id === preselectedListId ? 'checked' : ''}>
-              <span class="grow">${sport.emoji} ${esc(sport.label)} — ${esc(l.label)}</span>
-              ${full ? '<span class="chip chip-wl">waitlist</span>' : ''}
+              <span class="grow">${esc(sport.label)} — ${esc(l.label)}</span>
+              ${full ? `<span class="chip chip-wl">${esc(t('waitlist').toLowerCase())}</span>` : ''}
             </label>`;
         }).join('')}
       </div>`;
@@ -583,22 +784,22 @@ function openJoinSheet(ev, preselectedListId) {
 
   const ov = openModal(`
     <div class="modal-body">
-      <h2>Sign up — ${esc(fmtDate(ev.date))}</h2>
+      <h2>${esc(t('signupTitle', { date: fmtDate(ev.date) }))}</h2>
       ${profileFieldsHtml(p)}
-      <h3 class="section-sub">Pick your list(s)</h3>
+      <h3 class="section-sub">${esc(t('pickLists'))}</h3>
       <div class="prices-once">${pricesSummary(ev)}</div>
-      ${listCheckboxes || '<p class="hint">You are already on every list 😄</p>'}
-      <h3 class="section-sub">Payment method</h3>
+      ${listCheckboxes || `<p class="hint">${esc(t('onEveryList'))}</p>`}
+      <h3 class="section-sub">${esc(t('payMethod'))}</h3>
       <div class="row gap">
-        <label class="pay-opt"><input type="radio" name="paym" value="etransfer" checked> <span>📧 E-transfer</span></label>
-        <label class="pay-opt"><input type="radio" name="paym" value="cash"> <span>💵 Cash on site</span></label>
+        <label class="pay-opt"><input type="radio" name="paym" value="etransfer" checked> <span>${esc(t('etransfer'))}</span></label>
+        <label class="pay-opt"><input type="radio" name="paym" value="cash"> <span>${esc(t('cashOnSite'))}</span></label>
       </div>
       <div class="price-box" id="join-price"></div>
       <div class="pay-instructions" id="join-payinfo"></div>
-      <p class="hint">ℹ️ The host might move your name to the appropriate level. Your spot is confirmed once payment is received.</p>
+      <p class="hint">${esc(t('levelNote'))} ${esc(t('waitlistNote'))}</p>
       <div class="row gap">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        <button class="btn btn-primary grow" id="join-confirm">Confirm sign-up</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="join-confirm">${esc(t('confirmSignup'))}</button>
       </div>
     </div>`);
 
@@ -607,7 +808,6 @@ function openJoinSheet(ev, preselectedListId) {
   function refreshPrice() {
     const method = $('input[name="paym"]:checked', ov).value;
     const chosen = $$('input[data-list]:checked', ov).map(c => c.dataset.list);
-    // include lists I'm already on, so bundles apply across the whole event
     const already = [...myIds];
     const { total: totalAll } = computePrice(ev, [...chosen, ...already], method);
     const { total: totalOld } = computePrice(ev, already, method);
@@ -615,11 +815,11 @@ function openJoinSheet(ev, preselectedListId) {
     const { parts } = computePrice(ev, chosen.length ? [...chosen, ...already] : [], method);
     $('#join-price', ov).innerHTML = chosen.length
       ? `${parts.map(pt => `<div class="price-line"><span>${esc(pt.label)}</span><span>${fmtMoney(pt.price)}</span></div>`).join('')}
-         <div class="price-line price-total"><span>To pay${already.length ? ' (new total for this event)' : ''}</span><span>${fmtMoney(already.length ? totalAll : due)}</span></div>`
-      : '<p class="hint">Select at least one list.</p>';
+         <div class="price-line price-total"><span>${esc(already.length ? t('newTotal') : t('toPay'))}</span><span>${fmtMoney(already.length ? totalAll : due)}</span></div>`
+      : `<p class="hint">${esc(t('selectOne'))}</p>`;
     $('#join-payinfo', ov).innerHTML = method === 'etransfer'
-      ? `<p>📧 Send your e-transfer to <strong>${esc(s.etransferEmail)}</strong><br><small>Mention <strong>your name</strong> in the transfer message!</small></p>`
-      : `<p>💵 Bring cash and pay an exec at the gym. <small>${esc(s.lateFeeNote || '')}</small></p>`;
+      ? `<p>${esc(t('etransferTo'))} <strong>${esc(s.etransferEmail)}</strong><br><small>${esc(t('mentionName'))}</small></p>`
+      : `<p>${esc(t('bringCash'))} <small>${esc(s.lateFeeNote || '')}</small></p>`;
   }
   $$('input[data-list], input[name="paym"]', ov).forEach(i => i.addEventListener('change', refreshPrice));
   refreshPrice();
@@ -628,7 +828,7 @@ function openJoinSheet(ev, preselectedListId) {
     const np = readProfileFields(ov);
     if (!np) return;
     const chosen = $$('input[data-list]:checked', ov).map(c => c.dataset.list);
-    if (!chosen.length) { toast('Pick at least one list', 'err'); return; }
+    if (!chosen.length) { toast(t('pickOne'), 'err'); return; }
     const method = $('input[name="paym"]:checked', ov).value;
     saveProfile(np);
     const now = Date.now();
@@ -636,12 +836,15 @@ function openJoinSheet(ev, preselectedListId) {
       id: uid('su'),
       listId,
       name: np.name,
+      email: np.email,
+      phone: np.phone,
       insta: np.insta,
       photo: np.photo,
       deviceId: DEVICE,
       method,
       paid: false,
       checkedIn: false,
+      team: null,
       order: now + i,
       createdAt: now + i,
       addedByExec: false,
@@ -649,11 +852,11 @@ function openJoinSheet(ev, preselectedListId) {
     try {
       await store.addSignups(ev.id, signups);
       ov.remove();
-      toast('You\'re on the list! 🎉');
+      toast(t('onTheList'));
       openPayInfoModal(ev, method);
     } catch (err) {
       console.error(err);
-      toast('Something went wrong — try again', 'err');
+      toast(t('errGeneric'), 'err');
     }
   });
 }
@@ -666,17 +869,17 @@ function openPayInfoModal(ev, method) {
   const { total } = computePrice(ev, ids, m);
   openModal(`
     <div class="modal-body">
-      <h2>How to pay</h2>
+      <h2>${esc(t('howToPay'))}</h2>
       <div class="price-box">
-        <div class="price-line price-total"><span>Your total for ${esc(fmtDate(ev.date))}</span><span>${fmtMoney(total)}</span></div>
+        <div class="price-line price-total"><span>${esc(t('yourTotal', { date: fmtDate(ev.date) }))}</span><span>${fmtMoney(total)}</span></div>
       </div>
       ${m === 'etransfer' ? `
-        <p>📧 E-transfer to:</p>
+        <p>${esc(t('etransferTo'))}</p>
         <p class="pay-email">${esc(s.etransferEmail)}</p>
-        <p class="hint">Mention <strong>your name</strong> (and anyone you're paying for) in the message.</p>` : `
-        <p>💵 You chose <strong>cash</strong> — pay an exec at the gym before you play.</p>`}
-      <p class="hint">⚠️ ${esc(s.lateFeeNote || '')}</p>
-      <button class="btn btn-primary wide" data-close>Got it</button>
+        <p class="hint">${esc(t('mentionName'))}</p>` : `
+        <p>${esc(t('bringCash'))}</p>`}
+      <p class="hint">${esc(s.lateFeeNote || '')}</p>
+      <button class="btn btn-primary wide" data-close>${esc(t('gotIt'))}</button>
     </div>`);
 }
 
@@ -687,19 +890,19 @@ function openPayInfoModal(ev, method) {
 function openPinModal() {
   const ov = openModal(`
     <div class="modal-body">
-      <h2>Exec access</h2>
-      <input class="input input-pin" id="pin-input" type="password" inputmode="numeric" placeholder="Club PIN" maxlength="12" autofocus>
+      <h2>${esc(t('execAccess'))}</h2>
+      <input class="input input-pin" id="pin-input" type="password" inputmode="numeric" placeholder="${esc(t('clubPin'))}" maxlength="12" autofocus>
       <div class="row gap">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        <button class="btn btn-primary grow" id="pin-go">Unlock</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="pin-go">${esc(t('unlock'))}</button>
       </div>
     </div>`);
   const tryPin = () => {
     const val = $('#pin-input', ov).value.trim();
     if (val && val === String(state.settings.execPin || '')) {
-      setExec(true); ov.remove(); toast('Exec mode on 🔓'); render();
+      setExec(true); ov.remove(); toast(t('execModeOn')); render();
     } else {
-      toast('Wrong PIN', 'err');
+      toast(t('wrongPin'), 'err');
     }
   };
   $('#pin-go', ov).addEventListener('click', tryPin);
@@ -712,62 +915,81 @@ function openPinModal() {
 /* ================================================================== */
 
 function openPlayerAdminModal(ev, su) {
+  const curList = listById(ev, su.listId);
   const listsOptions = (ev.lists || []).map(l => {
     const sess = sessionById(ev, l.sessionId);
-    return `<option value="${esc(l.id)}" ${l.id === su.listId ? 'selected' : ''}>${esc(sess ? sess.label : '')} · ${SPORTS[l.sport]?.emoji || ''} ${esc(l.label)}</option>`;
+    return `<option value="${esc(l.id)}" ${l.id === su.listId ? 'selected' : ''}>${esc(sess ? sess.label : '')} · ${esc(SPORTS[l.sport]?.label || '')} ${esc(l.label)}</option>`;
   }).join('');
+  const teamCount = curList?.teamCount || 0;
   const ov = openModal(`
     <div class="modal-body">
       <div class="row gap center">
         ${avatarHtml(su)}
         <div class="grow">
           <h2 class="m0">${esc(su.name)}</h2>
-          ${su.insta ? `<a href="https://instagram.com/${esc(su.insta)}" target="_blank" rel="noopener">@${esc(su.insta)}</a>` : '<small class="hint">no instagram</small>'}
+          <small class="hint">
+            ${su.insta ? `<a href="https://instagram.com/${esc(su.insta)}" target="_blank" rel="noopener">@${esc(su.insta)}</a>` : esc(t('noInsta'))}
+            · ${su.email ? esc(su.email) : esc(t('noEmail'))}${su.phone ? ` · ${esc(su.phone)}` : ''}
+          </small>
         </div>
       </div>
       <div class="row gap">
-        <button class="btn grow ${su.paid ? 'btn-success' : 'btn-ghost'}" id="pa-paid">${su.paid ? 'Paid ✓' : 'Mark paid'}</button>
-        <button class="btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}" id="pa-in">${su.checkedIn ? 'Here ✓' : 'Check in'}</button>
+        <button class="btn grow ${su.paid ? 'btn-success' : 'btn-ghost'}" id="pa-paid">${esc(su.paid ? t('paid') : t('markPaid'))}</button>
+        <button class="btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}" id="pa-in">${esc(su.checkedIn ? t('checkedIn') : t('checkIn'))}</button>
       </div>
-      <p class="hint">Payment: ${su.method === 'cash' ? '💵 cash' : '📧 e-transfer'}${su.addedByExec ? ' · added by exec' : ''}</p>
-      <label class="field-label">Move to another list</label>
+      <p class="hint">${esc(su.method === 'cash' ? t('cashOnSite') : t('etransfer'))}${su.addedByExec ? ' · ' + esc(t('addedByExec')) : ''}</p>
+      ${teamCount ? `
+        <label class="field-label">${esc(t('putInTeam'))}</label>
+        <div class="row gap wrap" id="pa-teams">
+          <button class="btn btn-small ${!su.team ? 'btn-exec' : 'btn-ghost'}" data-team="0">—</button>
+          ${Array.from({ length: teamCount }, (_, i) => `<button class="btn btn-small ${su.team === i + 1 ? 'btn-exec' : 'btn-ghost'}" data-team="${i + 1}">${i + 1}</button>`).join('')}
+        </div>` : ''}
+      <label class="field-label">${esc(t('moveTo'))}</label>
       <select class="input" id="pa-move">${listsOptions}</select>
       <div class="row gap">
-        <button class="btn btn-ghost grow" id="pa-top">⬆ Top of list</button>
-        <button class="btn btn-danger grow" id="pa-remove">Remove</button>
+        <button class="btn btn-ghost grow" id="pa-top">${esc(t('topOfList'))}</button>
+        <button class="btn btn-danger grow" id="pa-remove">${esc(t('remove'))}</button>
       </div>
-      <button class="btn btn-ghost wide" data-close>Done</button>
+      <button class="btn btn-ghost wide" data-close>${esc(t('done'))}</button>
     </div>`);
 
   $('#pa-paid', ov).addEventListener('click', async () => {
     await store.updateSignup(ev.id, su.id, { paid: !su.paid, paidAt: !su.paid ? Date.now() : null });
     su.paid = !su.paid;
     $('#pa-paid', ov).className = `btn grow ${su.paid ? 'btn-success' : 'btn-ghost'}`;
-    $('#pa-paid', ov).textContent = su.paid ? 'Paid ✓' : 'Mark paid';
+    $('#pa-paid', ov).textContent = su.paid ? t('paid') : t('markPaid');
   });
   $('#pa-in', ov).addEventListener('click', async () => {
     await store.updateSignup(ev.id, su.id, { checkedIn: !su.checkedIn });
     su.checkedIn = !su.checkedIn;
     $('#pa-in', ov).className = `btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}`;
-    $('#pa-in', ov).textContent = su.checkedIn ? 'Here ✓' : 'Check in';
+    $('#pa-in', ov).textContent = su.checkedIn ? t('checkedIn') : t('checkIn');
   });
+  $$('#pa-teams [data-team]', ov).forEach(b => b.addEventListener('click', async () => {
+    const n = +b.dataset.team || null;
+    await store.updateSignup(ev.id, su.id, { team: n });
+    su.team = n;
+    $$('#pa-teams [data-team]', ov).forEach(x => {
+      x.className = `btn btn-small ${(+x.dataset.team || null) === n ? 'btn-exec' : 'btn-ghost'}`;
+    });
+  }));
   $('#pa-move', ov).addEventListener('change', async e => {
-    await store.updateSignup(ev.id, su.id, { listId: e.target.value, order: Date.now() });
-    toast(`${su.name} moved`);
+    await moveSignup(ev, su, e.target.value);
+    toast(t('moved', { name: su.name }));
     ov.remove();
   });
   $('#pa-top', ov).addEventListener('click', async () => {
     const first = listEntries(ev.id, su.listId)[0];
     const newOrder = first ? (first.order ?? first.createdAt) - 1000 : Date.now();
     await store.updateSignup(ev.id, su.id, { order: newOrder });
-    toast(`${su.name} moved to top`);
+    toast(t('movedTop', { name: su.name }));
     ov.remove();
   });
   $('#pa-remove', ov).addEventListener('click', async () => {
     ov.remove();
-    if (await confirmModal(`Remove ${su.name} from the list?`, 'Remove')) {
-      await store.deleteSignup(ev.id, su.id);
-      toast(`${su.name} removed`);
+    if (await confirmModal(t('removeConfirm', { name: su.name }), t('remove'))) {
+      await removeSignup(ev, su);
+      toast(t('removed', { name: su.name }));
     }
   });
 }
@@ -776,57 +998,47 @@ function openExecAddModal(ev, listId) {
   const l = listById(ev, listId);
   const ov = openModal(`
     <div class="modal-body">
-      <h2>Add player</h2>
-      <p class="hint">${SPORTS[l?.sport]?.emoji || ''} ${esc(l?.label || '')}</p>
+      <h2>${esc(t('addPlayer').replace('＋ ', ''))}</h2>
+      <p class="hint">${esc(SPORTS[l?.sport]?.label || '')} — ${esc(l?.label || '')}</p>
       <div class="stack">
-        <input class="input" id="ea-name" placeholder="Name *" maxlength="40">
-        <input class="input" id="ea-insta" placeholder="Instagram (optional)" maxlength="40">
-        <label class="pay-opt"><input type="checkbox" id="ea-paid"> <span>Already paid</span></label>
+        <input class="input" id="ea-name" placeholder="${esc(t('nameOnly'))}" maxlength="40">
+        <input class="input" id="ea-email" type="email" placeholder="${esc(t('emailPh').replace(' *', ''))}" maxlength="80">
+        <input class="input" id="ea-insta" placeholder="${esc(t('instaPh'))}" maxlength="40">
+        <label class="pay-opt"><input type="checkbox" id="ea-paid"> <span>${esc(t('alreadyPaid'))}</span></label>
       </div>
       <div class="row gap">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        <button class="btn btn-primary grow" id="ea-save">Add</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="ea-save">${esc(t('add'))}</button>
       </div>
     </div>`);
   $('#ea-save', ov).addEventListener('click', async () => {
     const name = $('#ea-name', ov).value.trim();
-    if (!name) { toast('Name required', 'err'); return; }
+    if (!name) { toast(t('nameReq'), 'err'); return; }
     await store.addSignups(ev.id, [{
       id: uid('su'),
       listId,
       name,
+      email: $('#ea-email', ov).value.trim(),
+      phone: '',
       insta: $('#ea-insta', ov).value.trim().replace(/^@/, ''),
       photo: '',
       deviceId: 'exec-added',
       method: 'cash',
       paid: $('#ea-paid', ov).checked,
       checkedIn: false,
+      team: null,
       order: Date.now(),
       createdAt: Date.now(),
       addedByExec: true,
     }]);
     ov.remove();
-    toast(`${name} added`);
+    toast(t('added', { name }));
   });
 }
 
 /* ================================================================== */
 /* Exec: payments summary + CSV                                        */
 /* ================================================================== */
-
-function personTotals(ev) {
-  /* Group signups per person, compute expected price with bundles. */
-  const persons = {};
-  for (const su of eventSignups(ev.id)) {
-    const k = personKey(su);
-    if (!persons[k]) persons[k] = { name: su.name, insta: su.insta, method: su.method, signups: [] };
-    persons[k].signups.push(su);
-  }
-  return Object.values(persons).map(p => {
-    const { total } = computePrice(ev, p.signups.map(x => x.listId), p.method);
-    return { ...p, total, paid: p.signups.every(x => x.paid), checkedIn: p.signups.some(x => x.checkedIn) };
-  }).sort((a, b) => a.name.localeCompare(b.name));
-}
 
 function openSummaryModal(ev) {
   const people = personTotals(ev);
@@ -836,34 +1048,35 @@ function openSummaryModal(ev) {
   const outstanding = unpaid.reduce((a, p) => a + p.total, 0);
   openModal(`
     <div class="modal-body">
-      <h2>Payments — ${esc(fmtDate(ev.date))}</h2>
+      <h2>${esc(t('paymentsTitle', { date: fmtDate(ev.date) }))}</h2>
       <div class="stat-row">
-        <div class="stat"><strong>${people.length}</strong><span>players</span></div>
-        <div class="stat stat-good"><strong>${fmtMoney(collected)}</strong><span>collected</span></div>
-        <div class="stat stat-bad"><strong>${fmtMoney(outstanding)}</strong><span>outstanding</span></div>
+        <div class="stat"><strong>${people.length}</strong><span>${esc(t('players'))}</span></div>
+        <div class="stat stat-good"><strong>${fmtMoney(collected)}</strong><span>${esc(t('collected'))}</span></div>
+        <div class="stat stat-bad"><strong>${fmtMoney(outstanding)}</strong><span>${esc(t('outstanding'))}</span></div>
       </div>
       ${unpaid.length ? `
-        <h3 class="section-sub">Not paid yet (${unpaid.length})</h3>
+        <h3 class="section-sub">${esc(t('notPaidYet', { n: unpaid.length }))}</h3>
         <div class="summary-list">
-          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}</span><span class="chip chip-unpaid">${p.method === 'cash' ? '💵' : '📧'} ${fmtMoney(p.total)}</span></div>`).join('')}
-        </div>` : '<p class="hint">Everyone paid 🎉</p>'}
+          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}</span><span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
+        </div>` : `<p class="hint">${esc(t('everyonePaid'))}</p>`}
       ${paid.length ? `
-        <h3 class="section-sub">Paid (${paid.length})</h3>
+        <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
         <div class="summary-list">
           ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span><span class="chip chip-paid">${fmtMoney(p.total)} ✓</span></div>`).join('')}
         </div>` : ''}
-      <button class="btn btn-primary wide" data-close>Close</button>
+      <button class="btn btn-primary wide" data-close>${esc(t('close'))}</button>
     </div>`, { wide: true });
 }
 
 function exportCsv(ev) {
-  const rows = [['Name', 'Instagram', 'Session', 'List', 'Sport', 'Status', 'Payment method', 'Paid', 'Checked in']];
+  const rows = [['Name', 'Email', 'Phone', 'Instagram', 'Session', 'List', 'Sport', 'Team', 'Status', 'Payment method', 'Paid', 'Checked in']];
   for (const l of ev.lists || []) {
     const sess = sessionById(ev, l.sessionId);
     const entries = listEntries(ev.id, l.id);
     const { confirmed, waitlist } = splitByCap(entries, l.cap || 0);
-    for (const su of confirmed) rows.push([su.name, su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, 'confirmed', su.method, su.paid ? 'yes' : 'NO', su.checkedIn ? 'yes' : '']);
-    for (const su of waitlist) rows.push([su.name, su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, 'waitlist', su.method, su.paid ? 'yes' : 'NO', su.checkedIn ? 'yes' : '']);
+    const row = (su, status) => [su.name, su.email || '', su.phone || '', su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, su.team || '', status, su.method, su.paid ? 'yes' : 'NO', su.checkedIn ? 'yes' : ''];
+    for (const su of confirmed) rows.push(row(su, 'confirmed'));
+    for (const su of waitlist) rows.push(row(su, 'waitlist'));
   }
   const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
@@ -878,24 +1091,8 @@ function exportCsv(ev) {
 /* Exec: event editor                                                  */
 /* ================================================================== */
 
-function duplicateLatestEvent() {
-  const src = [...state.events].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
-  if (!src) return;
-  const d = new Date((src.date || new Date().toISOString().slice(0, 10)) + 'T12:00:00');
-  d.setDate(d.getDate() + 7);
-  const copy = {
-    ...JSON.parse(JSON.stringify(src)),
-    id: uid('ev'),
-    date: d.toISOString().slice(0, 10),
-    status: 'open',
-    createdAt: Date.now(),
-  };
-  copy.lists = copy.lists.map(l => ({ ...l, id: uid('l') }));
-  openEventEditor(copy, { isNew: true });
-}
-
 function sportOptions(sel) {
-  return Object.entries(SPORTS).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v.emoji} ${v.label}</option>`).join('');
+  return Object.entries(SPORTS).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v.label}</option>`).join('');
 }
 
 function openEventEditor(ev, { isNew = false } = {}) {
@@ -905,40 +1102,40 @@ function openEventEditor(ev, { isNew = false } = {}) {
 
   const ov = openModal(`
     <div class="modal-body">
-      <h2>${creating ? 'New event' : 'Edit event'}</h2>
+      <h2>${esc(creating ? t('newEventTitle') : t('editEventTitle'))}</h2>
       <div class="stack">
-        <label class="field-label">Title</label>
+        <label class="field-label">${esc(t('title'))}</label>
         <input class="input" id="ee-title" value="${esc(draft.title || '')}" maxlength="60">
-        <label class="field-label">Date</label>
+        <label class="field-label">${esc(t('date'))}</label>
         <input class="input" id="ee-date" type="date" value="${esc(draft.date || '')}">
-        <label class="field-label">Location</label>
+        <label class="field-label">${esc(t('location'))}</label>
         <input class="input" id="ee-location" value="${esc(draft.location || state.settings.location || '')}" maxlength="120">
         <div class="row gap">
           <div class="grow stack">
-            <label class="field-label">Slot 1 label</label>
+            <label class="field-label">${esc(t('slot1'))}</label>
             <input class="input" id="ee-s1" value="${esc(draft.sessions?.[0]?.label || '5:30 – 7:30 PM')}">
           </div>
           <div class="grow stack">
-            <label class="field-label">Slot 2 label</label>
+            <label class="field-label">${esc(t('slot2'))}</label>
             <input class="input" id="ee-s2" value="${esc(draft.sessions?.[1]?.label || '7:30 – 9:30 PM')}">
           </div>
         </div>
       </div>
-      <h3 class="section-sub">Lists</h3>
+      <h3 class="section-sub">${esc(t('lists'))}</h3>
       <div id="ee-lists"></div>
-      <button class="btn btn-ghost wide" id="ee-addlist">＋ Add list</button>
-      <h3 class="section-sub">Bundle price (playing a sport in both slots)</h3>
+      <button class="btn btn-ghost wide" id="ee-addlist">${esc(t('addList'))}</button>
+      <h3 class="section-sub">${esc(t('bundleLabel'))}</h3>
       <div class="row gap center">
         <select class="input grow" id="ee-bsport">
-          <option value="">No bundle</option>
+          <option value="">${esc(t('noBundle'))}</option>
           ${sportOptions(draft.bundles?.[0]?.sport)}
         </select>
         <input class="input input-num" id="ee-bprice" type="number" min="0" step="1" placeholder="$" value="${esc(draft.bundles?.[0]?.priceE ?? '')}">
       </div>
       <div class="row gap sticky-actions">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        ${!creating ? '<button class="btn btn-danger" id="ee-delete">Delete</button>' : ''}
-        <button class="btn btn-primary grow" id="ee-save">${creating ? 'Create event' : 'Save changes'}</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        ${!creating ? `<button class="btn btn-danger" id="ee-delete">${esc(t('deleteBtn'))}</button>` : ''}
+        <button class="btn btn-primary grow" id="ee-save">${esc(creating ? t('createEvent') : t('saveChanges'))}</button>
       </div>
     </div>`, { wide: true });
 
@@ -947,25 +1144,28 @@ function openEventEditor(ev, { isNew = false } = {}) {
       <div class="ee-list" data-i="${i}">
         <div class="row gap">
           <select class="input" data-f="sessionId">
-            <option value="s1" ${l.sessionId === 's1' ? 'selected' : ''}>Slot 1</option>
-            <option value="s2" ${l.sessionId === 's2' ? 'selected' : ''}>Slot 2</option>
+            <option value="s1" ${l.sessionId === 's1' ? 'selected' : ''}>${esc(t('slotN', { n: 1 }))}</option>
+            <option value="s2" ${l.sessionId === 's2' ? 'selected' : ''}>${esc(t('slotN', { n: 2 }))}</option>
           </select>
           <select class="input grow" data-f="sport">${sportOptions(l.sport)}</select>
+          <select class="input input-num" data-f="teamCount" title="${esc(t('teams'))}">
+            ${[0, 2, 3, 4, 6].map(n => `<option value="${n}" ${(l.teamCount || 0) === n ? 'selected' : ''}>${n || '—'}</option>`).join('')}
+          </select>
           <button class="btn btn-tiny btn-danger" data-del="${i}">✕</button>
         </div>
         <div class="row gap">
-          <input class="input grow" data-f="label" placeholder="Level / label" value="${esc(l.label)}">
-          <input class="input input-num" data-f="cap" type="number" min="0" step="1" title="Capacity" value="${esc(l.cap)}">
-          <input class="input input-num" data-f="priceE" type="number" min="0" step="1" title="Price e-transfer" value="${esc(l.priceE)}">
-          <input class="input input-num" data-f="priceC" type="number" min="0" step="1" title="Price cash" value="${esc(l.priceC)}">
+          <input class="input grow" data-f="label" placeholder="${esc(t('levelPh'))}" value="${esc(l.label)}">
+          <input class="input input-num" data-f="cap" type="number" min="0" step="1" value="${esc(l.cap)}">
+          <input class="input input-num" data-f="priceE" type="number" min="0" step="1" value="${esc(l.priceE)}">
+          <input class="input input-num" data-f="priceC" type="number" min="0" step="1" value="${esc(l.priceC)}">
         </div>
-        <div class="ee-cols"><span>slot / sport</span><span>label · cap · e-transfer $ · cash $</span></div>
+        <div class="ee-cols"><span>${esc(t('listCols'))}</span><span>${esc(t('listCols2'))}</span></div>
       </div>`).join('');
-    $$('.ee-list', ov).forEach(row => {
-      const i = +row.dataset.i;
-      $$('[data-f]', row).forEach(inp => inp.addEventListener('change', () => {
+    $$('.ee-list', ov).forEach(rowEl => {
+      const i = +rowEl.dataset.i;
+      $$('[data-f]', rowEl).forEach(inp => inp.addEventListener('change', () => {
         const f = inp.dataset.f;
-        draft.lists[i][f] = (f === 'cap' || f === 'priceE' || f === 'priceC') ? (parseFloat(inp.value) || 0) : inp.value;
+        draft.lists[i][f] = (f === 'cap' || f === 'priceE' || f === 'priceC' || f === 'teamCount') ? (parseFloat(inp.value) || 0) : inp.value;
       }));
     });
     $$('[data-del]', ov).forEach(b => b.addEventListener('click', () => {
@@ -976,7 +1176,7 @@ function openEventEditor(ev, { isNew = false } = {}) {
   renderLists();
 
   $('#ee-addlist', ov).addEventListener('click', () => {
-    draft.lists.push({ id: uid('l'), sessionId: 's1', sport: 'volleyball', label: '', cap: 14, priceE: 8, priceC: 10 });
+    draft.lists.push({ id: uid('l'), sessionId: 's1', sport: 'volleyball', label: '', cap: 14, priceE: 8, priceC: 10, teamCount: 0 });
     renderLists();
   });
 
@@ -985,30 +1185,30 @@ function openEventEditor(ev, { isNew = false } = {}) {
     draft.date = $('#ee-date', ov).value;
     draft.location = $('#ee-location', ov).value.trim();
     draft.sessions = [
-      { id: 's1', label: $('#ee-s1', ov).value.trim() || 'Slot 1' },
-      { id: 's2', label: $('#ee-s2', ov).value.trim() || 'Slot 2' },
+      { id: 's1', label: $('#ee-s1', ov).value.trim() || t('slotN', { n: 1 }) },
+      { id: 's2', label: $('#ee-s2', ov).value.trim() || t('slotN', { n: 2 }) },
     ];
     const bsport = $('#ee-bsport', ov).value;
     const bprice = parseFloat($('#ee-bprice', ov).value);
     draft.bundles = bsport && !isNaN(bprice)
-      ? [{ sport: bsport, label: `${SPORTS[bsport].label} 4h (both time slots)`, priceE: bprice, priceC: bprice }]
+      ? [{ sport: bsport, label: `${SPORTS[bsport].label} 4h`, priceE: bprice, priceC: bprice }]
       : [];
-    if (!draft.date) { toast('Pick a date', 'err'); return; }
-    if (!draft.lists.length) { toast('Add at least one list', 'err'); return; }
+    if (!draft.date) { toast(t('pickDate'), 'err'); return; }
+    if (!draft.lists.length) { toast(t('addOneList'), 'err'); return; }
     draft.status = draft.status || 'open';
     await store.saveEvent(draft);
     ov.remove();
-    toast(creating ? 'Event created 🎉' : 'Event saved');
+    toast(creating ? t('eventCreated') : t('eventSaved'));
     location.hash = '#/event/' + draft.id;
   });
 
   const del = $('#ee-delete', ov);
   if (del) del.addEventListener('click', async () => {
     ov.remove();
-    if (await confirmModal('Delete this event and ALL its sign-ups? This cannot be undone.', 'Delete event')) {
+    if (await confirmModal(t('deleteEventConfirm'), t('deleteEvent'))) {
       await store.deleteEvent(draft.id);
       location.hash = '#/';
-      toast('Event deleted');
+      toast(t('eventDeleted'));
     }
   });
 }
@@ -1021,24 +1221,26 @@ function openSettingsModal() {
   const s = state.settings;
   const ov = openModal(`
     <div class="modal-body">
-      <h2>Club settings</h2>
+      <h2>${esc(t('clubSettings'))}</h2>
       <div class="stack">
-        <label class="field-label">E-transfer email</label>
+        <label class="field-label">${esc(t('etransferEmailLbl'))}</label>
         <input class="input" id="cs-email" value="${esc(s.etransferEmail || '')}">
-        <label class="field-label">Default location</label>
+        <label class="field-label">${esc(t('defaultLocation'))}</label>
         <input class="input" id="cs-location" value="${esc(s.location || '')}">
-        <label class="field-label">Instagram handle</label>
+        <label class="field-label">${esc(t('instaHandle'))}</label>
         <input class="input" id="cs-insta" value="${esc(s.instagram || '')}">
-        <label class="field-label">Exec PIN</label>
+        <label class="field-label">${esc(t('execPinLbl'))}</label>
         <input class="input" id="cs-pin" value="${esc(s.execPin || '')}" maxlength="12">
-        <label class="field-label">Late fee note</label>
+        <label class="field-label">${esc(t('seasonEndLbl'))}</label>
+        <input class="input" id="cs-season" type="date" value="${esc(s.seasonEnd || '')}">
+        <label class="field-label">${esc(t('lateFeeLbl'))}</label>
         <input class="input" id="cs-latefee" value="${esc(s.lateFeeNote || '')}">
-        <label class="field-label">Policies (one per line)</label>
+        <label class="field-label">${esc(t('policiesLbl'))}</label>
         <textarea class="input" id="cs-policies" rows="6">${esc((s.policies || []).join('\n'))}</textarea>
       </div>
       <div class="row gap">
-        <button class="btn btn-ghost grow" data-close>Cancel</button>
-        <button class="btn btn-primary grow" id="cs-save">Save</button>
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="cs-save">${esc(t('save'))}</button>
       </div>
     </div>`, { wide: true });
   $('#cs-save', ov).addEventListener('click', async () => {
@@ -1047,11 +1249,12 @@ function openSettingsModal() {
       location: $('#cs-location', ov).value.trim(),
       instagram: $('#cs-insta', ov).value.trim().replace(/^@/, ''),
       execPin: $('#cs-pin', ov).value.trim() || '1234',
+      seasonEnd: $('#cs-season', ov).value || s.seasonEnd || '',
       lateFeeNote: $('#cs-latefee', ov).value.trim(),
       policies: $('#cs-policies', ov).value.split('\n').map(x => x.trim()).filter(Boolean),
     });
     ov.remove();
-    toast('Settings saved');
+    toast(t('settingsSaved'));
   });
 }
 
@@ -1060,6 +1263,7 @@ function openSettingsModal() {
 /* ================================================================== */
 
 async function main() {
+  document.documentElement.lang = getLang();
   store = await createStore();
   window.addEventListener('hashchange', render);
   await store.init(newState => {

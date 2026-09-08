@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = {
   instagram: 'crsc_concordia',
   location: 'Collège de Maisonneuve, 2701 rue Nicolet, H1X 1Z8, 3rd floor',
   execPin: '1234',
+  seasonEnd: '2026-12-26',
   lateFeeNote: '+5$ late fee if payment is made after the event',
   policies: [
     'For e-Transfer make sure to mention the name of the person(s) you are paying for.',
@@ -63,15 +64,13 @@ export function deviceId() {
 /* A ready-to-use Saturday template mirroring the club's current sheet. */
 export function makeTemplateEvent(dateStr, title) {
   const lists = [
-    { id: uid('l'), sessionId: 's1', sport: 'basketball', label: 'Mixed',       cap: 12, priceE: 10, priceC: 10 },
-    { id: uid('l'), sessionId: 's1', sport: 'basketball', label: 'Men',         cap: 12, priceE: 10, priceC: 10 },
-    { id: uid('l'), sessionId: 's1', sport: 'football',   label: '5v5',         cap: 15, priceE: 10, priceC: 10 },
-    { id: uid('l'), sessionId: 's1', sport: 'volleyball', label: 'Advanced +',  cap: 14, priceE: 8,  priceC: 10 },
-    { id: uid('l'), sessionId: 's1', sport: 'volleyball', label: 'Advanced',    cap: 14, priceE: 8,  priceC: 10 },
-    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced (court 1)', cap: 14, priceE: 8, priceC: 10 },
-    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced (court 2)', cap: 14, priceE: 8, priceC: 10 },
-    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced + (court 1)', cap: 14, priceE: 8, priceC: 10 },
-    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced + (court 2)', cap: 14, priceE: 8, priceC: 10 },
+    { id: uid('l'), sessionId: 's1', sport: 'basketball', label: 'Mixed',      cap: 12, priceE: 10, priceC: 10, teamCount: 0 },
+    { id: uid('l'), sessionId: 's1', sport: 'basketball', label: 'Men',        cap: 12, priceE: 10, priceC: 10, teamCount: 0 },
+    { id: uid('l'), sessionId: 's1', sport: 'football',   label: '5v5',        cap: 15, priceE: 10, priceC: 10, teamCount: 0 },
+    { id: uid('l'), sessionId: 's1', sport: 'volleyball', label: 'Advanced +', cap: 14, priceE: 8,  priceC: 10, teamCount: 2 },
+    { id: uid('l'), sessionId: 's1', sport: 'volleyball', label: 'Advanced',   cap: 14, priceE: 8,  priceC: 10, teamCount: 2 },
+    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced',   cap: 28, priceE: 8,  priceC: 10, teamCount: 4 },
+    { id: uid('l'), sessionId: 's2', sport: 'volleyball', label: 'Advanced +', cap: 28, priceE: 8,  priceC: 10, teamCount: 4 },
   ];
   return {
     id: uid('ev'),
@@ -97,45 +96,60 @@ export function nextSaturday(offsetWeeks = 0) {
   return d.toISOString().slice(0, 10);
 }
 
+/* Every Saturday from the next one through endDate (inclusive), as ISO dates. */
+export function saturdaysUntil(endDate) {
+  const out = [];
+  for (let i = 0; ; i++) {
+    const s = nextSaturday(i);
+    if (!endDate || s > endDate) break;
+    out.push(s);
+    if (out.length > 60) break; // safety
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v2';
+const DEMO_KEY = 'crsc-demo-v3';
 
 function demoSeed() {
-  const seedSignups = (ev, listIdx, names, { paid = false } = {}) => names.map(([name, insta], i) => ({
+  const seedSignups = (ev, listIdx, names, { paid = false, teamed = false } = {}) => names.map(([name, insta], i) => ({
     id: uid('su'),
     listId: ev.lists[listIdx].id,
     name, insta,
+    email: name.toLowerCase().replace(/\s+/g, '.') + '@example.com',
+    phone: '',
     photo: '',
     deviceId: 'demo-seed',
     method: i % 2 ? 'cash' : 'etransfer',
     paid: paid || i < 2,
     checkedIn: paid,
+    team: teamed ? (i % 2) + 1 : null,
     order: Date.now() + i,
     createdAt: Date.now() + i,
     addedByExec: false,
   }));
 
-  // This week + next week to choose from, plus last week as a record.
-  const ev1 = makeTemplateEvent(nextSaturday(), 'Saturday Drop-in');
-  const ev2 = makeTemplateEvent(nextSaturday(1), 'Saturday Drop-in');
+  // A whole season of Saturdays to pick from, plus last week as a record.
+  const season = saturdaysUntil(DEFAULT_SETTINGS.seasonEnd).slice(0, 16)
+    .map(d => makeTemplateEvent(d, 'Saturday Drop-in'));
   const past = makeTemplateEvent(nextSaturday(-1), 'Saturday Drop-in');
   past.status = 'closed';
 
+  const signups = { [past.id]: seedSignups(past, 3, [
+    ['Giulio', ''], ['Heejin', ''], ['Anthony', ''], ['Cami', ''], ['Deniz', ''],
+  ], { paid: true, teamed: true }) };
+  for (const ev of season) signups[ev.id] = [];
+  signups[season[0].id] = seedSignups(season[0], 3, [
+    ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
+  ], { teamed: true });
+
   return {
     settings: { ...DEFAULT_SETTINGS },
-    events: [past, ev1, ev2],
-    signups: {
-      [ev1.id]: seedSignups(ev1, 0, [
-        ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
-      ]),
-      [ev2.id]: [],
-      [past.id]: seedSignups(past, 3, [
-        ['Giulio', ''], ['Heejin', ''], ['Anthony', ''], ['Cami', ''], ['Deniz', ''],
-      ], { paid: true }),
-    },
+    events: [past, ...season],
+    signups,
   };
 }
 
