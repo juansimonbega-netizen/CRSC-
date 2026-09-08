@@ -785,7 +785,7 @@ function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } =
         ${s.insta ? `<small>@${esc(s.insta)}</small>` : ''}
       </div>
       ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
-      ${exec || mine ? `${exec && s.checkedIn ? `<span class="chip chip-in">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (covered ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
+      ${exec || mine ? `${exec && s.checkedIn ? `<span class="chip ${s.paid || covered ? 'chip-in-ok' : 'chip-in-warn'}">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (covered ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
       ${mine && !exec && !cancellationLocked(ev) ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
 }
@@ -1197,8 +1197,8 @@ function openPlayerAdminModal(ev, su) {
         </div>
       </div>
       <div class="row gap">
-        <button class="btn grow ${su.paid ? 'btn-success' : 'btn-ghost'}" id="pa-paid">${esc(su.paid ? t('paid') : t('markPaid'))}</button>
-        <button class="btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}" id="pa-in">${esc(su.checkedIn ? t('checkedIn') : t('checkIn'))}</button>
+        <button class="btn grow cb" id="pa-paid"></button>
+        <button class="btn grow cb" id="pa-in"></button>
       </div>
       <p class="hint">${esc(su.method === 'cash' ? t('cashOnSite') : t('etransfer'))}${su.addedByExec ? ' · ' + esc(t('addedByExec')) : ''}</p>
       ${teamCount ? (() => {
@@ -1233,17 +1233,37 @@ function openPlayerAdminModal(ev, su) {
       <button class="btn btn-ghost wide" data-close>${esc(t('done'))}</button>
     </div>`);
 
+  /*
+   * Paid / checked-in as checkboxes with traffic-light colors:
+   * both off = red, exactly one on = yellow, both on = green.
+   * A Battle Pass counts as paid (its checkbox is locked on).
+   */
+  const coveredHere = coveredSignupIds(ev).has(su.id);
+  function paintStatus() {
+    const p = su.paid || coveredHere;
+    const c = !!su.checkedIn;
+    const onCls = p && c ? 'cb-green' : 'cb-yellow';
+    const paidBtn = $('#pa-paid', ov);
+    const inBtn = $('#pa-in', ov);
+    paidBtn.className = 'btn grow cb ' + (p ? onCls : (c ? 'cb-off' : 'cb-red'));
+    inBtn.className = 'btn grow cb ' + (c ? onCls : (p ? 'cb-off' : 'cb-red'));
+    paidBtn.textContent = (p ? '☑ ' : '☐ ') + (coveredHere ? t('battlePass') : (p ? t('paid') : t('markPaid')));
+    inBtn.textContent = (c ? '☑ ' : '☐ ') + (c ? t('checkedIn') : t('checkIn'));
+    paidBtn.disabled = coveredHere;
+  }
+  paintStatus();
   $('#pa-paid', ov).addEventListener('click', async () => {
-    await store.updateSignup(ev.id, su.id, { paid: !su.paid, paidAt: !su.paid ? Date.now() : null });
-    su.paid = !su.paid;
-    $('#pa-paid', ov).className = `btn grow ${su.paid ? 'btn-success' : 'btn-ghost'}`;
-    $('#pa-paid', ov).textContent = su.paid ? t('paid') : t('markPaid');
+    if (coveredHere) return;
+    const next = !su.paid;
+    await store.updateSignup(ev.id, su.id, { paid: next, paidAt: next ? Date.now() : null });
+    su.paid = next;
+    paintStatus();
   });
   $('#pa-in', ov).addEventListener('click', async () => {
-    await store.updateSignup(ev.id, su.id, { checkedIn: !su.checkedIn });
-    su.checkedIn = !su.checkedIn;
-    $('#pa-in', ov).className = `btn grow ${su.checkedIn ? 'btn-success' : 'btn-ghost'}`;
-    $('#pa-in', ov).textContent = su.checkedIn ? t('checkedIn') : t('checkIn');
+    const next = !su.checkedIn;
+    await store.updateSignup(ev.id, su.id, { checkedIn: next });
+    su.checkedIn = next;
+    paintStatus();
   });
   $$('#pa-teams [data-team]', ov).forEach(b => b.addEventListener('click', async () => {
     const n = +b.dataset.team || null;

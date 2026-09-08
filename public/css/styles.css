@@ -104,6 +104,18 @@ a { color: var(--orange-dark); }
 .chip-muted { background: #e7e0d0; color: var(--ink-soft); }
 .chip-demo { background: var(--ink); color: var(--bg); letter-spacing: 0.08em; }
 .chip-pass { background: var(--ink); color: #f5b942; letter-spacing: 0.04em; }
+/* checked-in chip: green when also paid, yellow when here but unpaid */
+.chip-in-ok { background: var(--green-soft); color: var(--green); }
+.chip-in-warn { background: #f8ecc0; color: #7c5c07; }
+
+/* paid / check-in checkbox toggles (traffic-light: red / yellow / green).
+   .btn.cb-* so these beat the base .btn background in the cascade. */
+.btn.cb { border-width: 2px; }
+.btn.cb-green { background: var(--green); border-color: var(--green); color: #fff; }
+.btn.cb-yellow { background: #f5c211; border-color: #b98f14; color: #4a3903; }
+.btn.cb-red { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+.btn.cb-off { background: transparent; border-color: var(--line); color: var(--ink-soft); }
+.btn.cb:disabled { opacity: 0.85; cursor: default; }
 
 /* ------- buttons / inputs ------- */
 .btn {
