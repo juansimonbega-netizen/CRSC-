@@ -769,12 +769,21 @@ async function openSeason() {
 /* Event view                                                          */
 /* ================================================================== */
 
+/* "Battle Pass 2H" / "Battle Pass 4H" chip. */
+function passChipHtml(type) {
+  return `<span class="chip chip-pass">${esc(t('battlePass'))}${type ? ' ' + esc(String(type).toUpperCase()) : ''}</span>`;
+}
+
 function paymentChip(s, covered = false) {
-  if (covered) return `<span class="chip chip-pass">${esc(t('battlePass'))}</span>`;
+  if (covered) return passChipHtml(playerPass(s.deviceId));
   if (s.paid) return `<span class="chip chip-paid">${esc(t('paid'))}</span>`;
   return `<span class="chip chip-unpaid">${esc(s.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`;
 }
 
+/*
+ * Payment status (paid/unpaid/Battle Pass) is private: execs see everyone's,
+ * players only see their own.
+ */
 function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } = {}) {
   const mine = s.deviceId === DEVICE;
   return `
@@ -785,7 +794,7 @@ function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } =
         ${s.insta ? `<small>@${esc(s.insta)}</small>` : ''}
       </div>
       ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
-      ${exec || mine ? `${exec && s.checkedIn ? `<span class="chip ${s.paid || covered ? 'chip-in-ok' : 'chip-in-warn'}">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (covered ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : (s.paid ? '<span class="chip chip-paid">✓</span>' : ''))}
+      ${exec ? `${s.checkedIn ? `<span class="chip ${s.paid || covered ? 'chip-in-ok' : 'chip-in-warn'}">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (mine ? paymentChip(s, covered) : '')}
       ${mine && !exec && !cancellationLocked(ev) ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
 }
@@ -887,7 +896,10 @@ function renderEvent(ev) {
             const sess = l ? sessionById(ev, l.sessionId) : null;
             return `<span class="chip chip-mine">${esc(SPORTS[l?.sport]?.label || '')} ${esc(l ? l.label : '?')}${sess ? ' · ' + esc(sess.label) : ''}</span>`;
           }).join('')}
-          ${mine.some(m => !m.paid && !coveredSet.has(m.id)) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : `<span class="chip ${mine.some(m => coveredSet.has(m.id)) ? 'chip-pass' : 'chip-paid'}">${esc(mine.every(m => coveredSet.has(m.id)) ? t('battlePass') : t('allPaid'))}</span>`}
+          ${mine.some(m => !m.paid && !coveredSet.has(m.id)) ? `<button class="btn btn-small btn-warn" id="btn-how-pay">${esc(t('howToPay'))}</button>` : (mine.every(m => coveredSet.has(m.id)) ? passChipHtml(playerPass(DEVICE)) : `<span class="chip chip-paid">${esc(t('allPaid'))}</span>`)}
+          ${ev.date === todayStr() && isOpen ? (mine.every(m => m.checkedIn)
+            ? `<span class="chip chip-in-ok">${esc(t('selfCheckedIn'))}</span><button class="btn btn-tiny btn-ghost" id="btn-self-out">${esc(t('undo'))}</button>`
+            : `<button class="btn btn-small btn-success" id="btn-self-in">${esc(t('imHere'))}</button>`) : ''}
         </div>
         ${!exec && isOpen && cancellationLocked(ev) ? `<p class="hint">${esc(t('cancelLocked'))}</p>` : ''}` : ''}
       ${exec ? `
@@ -915,6 +927,14 @@ function renderEvent(ev) {
     }
   }));
   $('#btn-how-pay')?.addEventListener('click', () => openPayInfoModal(ev));
+  $('#btn-self-in')?.addEventListener('click', async () => {
+    await Promise.all(mySignups(ev.id).map(m => store.updateSignup(ev.id, m.id, { checkedIn: true, selfCheckIn: true })));
+    toast(t('selfCheckedInToast'));
+  });
+  $('#btn-self-out')?.addEventListener('click', async () => {
+    await Promise.all(mySignups(ev.id).map(m => store.updateSignup(ev.id, m.id, { checkedIn: false, selfCheckIn: false })));
+    toast(t('selfCheckOutToast'));
+  });
 
   if (exec) {
     $$('[data-signup]').forEach(row => row.addEventListener('click', e => {
@@ -1247,7 +1267,7 @@ function openPlayerAdminModal(ev, su) {
     const inBtn = $('#pa-in', ov);
     paidBtn.className = 'btn grow cb ' + (p ? onCls : (c ? 'cb-off' : 'cb-red'));
     inBtn.className = 'btn grow cb ' + (c ? onCls : (p ? 'cb-off' : 'cb-red'));
-    paidBtn.textContent = (p ? '☑ ' : '☐ ') + (coveredHere ? t('battlePass') : (p ? t('paid') : t('markPaid')));
+    paidBtn.textContent = (p ? '☑ ' : '☐ ') + (coveredHere ? `${t('battlePass')} ${(playerPass(su.deviceId) || '').toUpperCase()}` : (p ? t('paid') : t('markPaid')));
     inBtn.textContent = (c ? '☑ ' : '☐ ') + (c ? t('checkedIn') : t('checkIn'));
     paidBtn.disabled = coveredHere;
   }
@@ -1498,7 +1518,7 @@ function openSummaryModal(ev) {
       ${paid.length ? `
         <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
         <div class="summary-list">
-          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span>${p.pass && p.total === 0 ? `<span class="chip chip-pass">${esc(t('battlePass'))}</span>` : `<span class="chip chip-paid">${fmtMoney(p.total)} ✓</span>`}</div>`).join('')}
+          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span>${p.pass && p.total === 0 ? passChipHtml(p.pass) : `<span class="chip chip-paid">${fmtMoney(p.total)} ✓</span>`}</div>`).join('')}
         </div>` : ''}
       <button class="btn btn-primary wide" data-close>${esc(t('close'))}</button>
     </div>`, { wide: true });

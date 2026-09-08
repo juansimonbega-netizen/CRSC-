@@ -75,6 +75,13 @@ const STRINGS = {
   lateFee: ['incl. late fee', 'incl. frais de retard'],
   lateFeeAmountLbl: ['Late fee amount ($)', 'Montant des frais de retard ($)'],
 
+  /* self check-in */
+  imHere: ['I\'m here — check in', 'Je suis là — j\'arrive'],
+  selfCheckedIn: ['Checked in ✓', 'Présence confirmée ✓'],
+  undo: ['Undo', 'Annuler'],
+  selfCheckedInToast: ['You\'re checked in — have a good game!', 'Présence confirmée — bonne partie!'],
+  selfCheckOutToast: ['Check-in removed', 'Présence annulée'],
+
   /* battle pass */
   battlePass: ['Battle Pass', 'Battle Pass'],
   battlePassLbl: ['Battle Pass (volleyball season)', 'Battle Pass (saison de volleyball)'],
@@ -153,13 +160,13 @@ const STRINGS = {
   /* emails (rendered in the recipient's language) */
   emailConfSubject: ['CRSC — You\'re signed up for {date}', 'CRSC — Inscription confirmée : {date}'],
   emailConfBody: [
-    'Hey {name}!\n\nYou\'re on the list for {date}:\n{lists}\n\n{payLine}\n{late}\n\nWhere: {location}\n\nCan\'t make it? Please remove your name on the sign-up page so someone on the waitlist can take your spot.\n\n— {club}',
-    'Salut {name}!\n\nVous êtes inscrit pour le {date} :\n{lists}\n\n{payLine}\n{late}\n\nOù : {location}\n\nVous ne pouvez plus venir? Retirez votre nom sur la page d\'inscription pour libérer votre place.\n\n— {club}',
+    'Hey {name}!\n\nYou\'re on the list for {date}:\n{lists}\n\n{payLine}\n{late}\n\nWhere: {location}\n\nWhen you arrive at the gym, open the sign-up page and tap "I\'m here" to check in.\n\nCan\'t make it? Please remove your name on the sign-up page so someone on the waitlist can take your spot.\n\n— {club}',
+    'Salut {name}!\n\nVous êtes inscrit pour le {date} :\n{lists}\n\n{payLine}\n{late}\n\nOù : {location}\n\nEn arrivant au gymnase, ouvrez la page d\'inscription et touchez « Je suis là » pour confirmer votre présence.\n\nVous ne pouvez plus venir? Retirez votre nom sur la page d\'inscription pour libérer votre place.\n\n— {club}',
   ],
   emailRemSubject: ['CRSC — Payment reminder for {date}', 'CRSC — Rappel de paiement : {date}'],
   emailRemBody: [
-    'Hey {name}!\n\nYour game is coming up ({date}) and our list shows {total} still unpaid.\n\n{payLine}\n{late}\n\nAlready paid? Then ignore this — an exec will confirm it shortly.\n\n— {club}',
-    'Salut {name}!\n\nVotre partie approche ({date}) et notre liste indique {total} non payé.\n\n{payLine}\n{late}\n\nDéjà payé? Ignorez ce message — un exec le confirmera sous peu.\n\n— {club}',
+    'Hey {name}!\n\nYour game is coming up ({date}) and our list shows {total} still unpaid.\n\n{payLine}\n{late}\n\nAlready paid? Then ignore this — an exec will confirm it shortly.\n\nWhen you arrive at the gym, open the sign-up page and tap "I\'m here" to check in.\n\n— {club}',
+    'Salut {name}!\n\nVotre partie approche ({date}) et notre liste indique {total} non payé.\n\n{payLine}\n{late}\n\nDéjà payé? Ignorez ce message — un exec le confirmera sous peu.\n\nEn arrivant au gymnase, ouvrez la page d\'inscription et touchez « Je suis là » pour confirmer votre présence.\n\n— {club}',
   ],
   emailPromoSubject: ['CRSC — A spot opened up: you\'re in for {date}!', 'CRSC — Une place s\'est libérée : vous jouez le {date}!'],
   emailPromoBody: [
