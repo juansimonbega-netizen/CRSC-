@@ -24,23 +24,25 @@
 window.FIREBASE_CONFIG = null;
 
 /*
- * EmailJS configuration — powers the automatic "you're off the waitlist"
- * emails. Leave as `null` to skip sending (promotions still happen, the app
- * just tells the exec no email went out).
+ * Club mailer — powers the automatic emails (sign-up confirmations, 24h
+ * payment reminders, waitlist promotions). Emails are sent FROM THE CLUB'S
+ * OWN GMAIL — the same account that receives the e-transfers — via a small
+ * Google Apps Script attached to that account. Free, ~100 emails/day.
  *
- * To enable:
- *   1. Create a free account at https://www.emailjs.com (200 emails/month free).
- *   2. Add an email service (e.g. the club Gmail) and note its Service ID.
- *   3. Create a template using these variables:
- *      {{to_email}} {{to_name}} {{event_date}} {{list_label}} {{session_label}}
- *      {{location}} {{etransfer_email}} {{club_name}}
- *      Set the template's "To email" field to {{to_email}}.
+ * Leave as `null` to skip sending (everything else still works; the app
+ * shows a toast that the email was skipped/simulated).
+ *
+ * Setup (5 minutes, full steps in README.md):
+ *   1. While logged into the club Gmail, go to https://script.google.com
+ *      → New project, and paste the mailer script from the README.
+ *   2. Change the SECRET in the script to something random.
+ *   3. Deploy → New deployment → Web app → Execute as: Me,
+ *      Who has access: Anyone → copy the web app URL.
  *   4. Fill in:
  *
- *      window.EMAILJS_CONFIG = {
- *        publicKey: "your_public_key",
- *        serviceId: "service_xxxxxxx",
- *        templateId: "template_xxxxxxx",
+ *      window.MAILER = {
+ *        url: "https://script.google.com/macros/s/XXXX/exec",
+ *        secret: "the-same-secret-you-put-in-the-script",
  *      };
  */
-window.EMAILJS_CONFIG = null;
+window.MAILER = null;

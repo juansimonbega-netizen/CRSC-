@@ -11,7 +11,7 @@ drop-in events (volleyball, basketball, football).
 - One-tap sign-up: first time you enter your **name + email + optional phone/Instagram/photo**; the device remembers you.
 - Pick **one or several lists** (e.g. volleyball in both slots) — the **4h bundle price** applies automatically. Prices are shown once, in one recap line.
 - Choose **e-transfer or cash**, and see exactly how much to send and to which email.
-- Full lists automatically become a **waitlist**. When a spot frees up, the first person in line is **promoted automatically and emailed** (see EmailJS below).
+- Full lists automatically become a **waitlist**. When a spot frees up, the first person in line is **promoted automatically and emailed** (see automatic emails below).
 - See who's signed up and, once execs set them, **which team everyone is on**.
 - Switch the whole app to **Français** with the FR button (English is the default).
 
@@ -68,27 +68,59 @@ Everything updates **live** — all execs and players see the same lists in real
 > Alternative hosting: `public/` is plain static files — drag-and-drop onto
 > [Netlify](https://app.netlify.com/drop) or GitHub Pages also works.
 
-## Automatic waitlist emails (EmailJS, free)
+## Automatic emails from the club Gmail (free, 5-minute setup)
 
-Waitlist promotion itself is automatic and needs no setup: the moment someone
-leaves a full list, the first person waiting becomes confirmed. To also email
-that person automatically:
+Three emails are sent automatically, **from the club's own Gmail** — the same
+account that receives the e-transfers (`concordiaRSclub@gmail.com`):
 
-1. Create a free account at <https://www.emailjs.com> (200 emails/month free —
-   plenty; only promotions send email).
-2. *Email services → Add service*: connect the club Gmail. Note the **Service ID**.
-3. *Email templates → Create template*. Set the "To email" field to
-   `{{to_email}}` and write the message with these variables (write it in
-   English + French, players get both):
-   `{{to_name}}`, `{{event_date}}`, `{{list_label}}`, `{{session_label}}`,
-   `{{location}}`, `{{etransfer_email}}`, `{{club_name}}`. Note the **Template ID**.
-4. *Account*: copy your **Public key**.
-5. Fill the three values into `window.EMAILJS_CONFIG` in
-   [`public/firebase-config.js`](public/firebase-config.js) and redeploy.
+1. **Sign-up confirmation** — the moment someone registers: their lists, total,
+   and how to pay, in the language (EN/FR) they signed up in.
+2. **Payment reminder** — in the 24 hours before the event, everyone still
+   marked unpaid gets one reminder with their exact amount. (A static site has
+   no scheduler, so the check runs whenever anyone has the app open in that
+   window — in practice players and execs open it constantly on game day. Each
+   person is flagged after sending, so nobody gets it twice.)
+3. **Waitlist promotion** — when a spot frees up, the person moving off the
+   waitlist is told they're confirmed.
 
-If EmailJS isn't configured, promotions still happen — the exec just sees a
-toast that no email went out. Phone numbers are collected for the exec's
-reference only (automatic SMS would require a paid service like Twilio).
+Setup, done while logged into the club Gmail:
+
+1. Go to <https://script.google.com> → **New project**, and replace the code with:
+
+   ```js
+   const SECRET = 'change-me-to-something-random';
+
+   function doPost(e) {
+     const d = JSON.parse(e.postData.contents);
+     if (d.secret !== SECRET) {
+       return ContentService.createTextOutput('forbidden');
+     }
+     MailApp.sendEmail({
+       to: d.to,
+       subject: d.subject,
+       body: d.message,
+       name: 'CRSC',
+     });
+     return ContentService.createTextOutput('ok');
+   }
+   ```
+
+2. Change `SECRET` to something random and save.
+3. **Deploy → New deployment → Web app**: *Execute as: Me*, *Who has access:
+   Anyone* → authorize when asked → copy the **web app URL**.
+4. Put the URL and the same secret into `window.MAILER` in
+   [`public/firebase-config.js`](public/firebase-config.js) and redeploy the site.
+
+Quota: a normal Gmail account can send ~100 emails/day through Apps Script —
+comfortable for a weekly event. If the mailer isn't configured, everything
+still works; the app just shows a toast that the email was skipped. Phone
+numbers are collected for the exec's reference only (automatic SMS would
+require a paid service like Twilio).
+
+One honest caveat: the secret sits in the site's JavaScript, so a determined
+person could use the mailer to send emails from the club account (capped at
+the daily quota). That matches the app's overall trust level; rotate the
+secret in both places if it's ever abused.
 
 ## Weekly exec workflow
 
@@ -125,8 +157,8 @@ public/
   js/store.js           data layer (localStorage demo store + Firestore store)
   js/app.js             UI: calendar, sign-up flow, teams, exec tools
   js/i18n.js            English/French strings (English primary)
-  js/notify.js          waitlist promotion detection + EmailJS sending
-  firebase-config.js    Firebase + EmailJS config (null = demo mode)
+  js/notify.js          mailer client + promotion/reminder logic
+  firebase-config.js    Firebase + club mailer config (null = demo mode)
 firebase.json           Firebase Hosting + rules wiring
 firestore.rules         Firestore security rules
 ```

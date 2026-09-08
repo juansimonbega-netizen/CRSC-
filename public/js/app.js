@@ -1,8 +1,8 @@
 import {
   createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday, saturdaysUntil, localISO,
 } from './store.js';
-import { t, getLang, setLang, locale } from './i18n.js';
-import { promotionCandidate, sendPromotionEmail } from './notify.js';
+import { t, tLang, getLang, setLang, locale } from './i18n.js';
+import { promotionCandidate, sendMail, mailerConfigured, reminderDue } from './notify.js';
 
 /* ================================================================== */
 /* Small utilities                                                     */
@@ -225,6 +225,116 @@ function personTotals(ev) {
 }
 
 /* ================================================================== */
+/* Emails: confirmation, payment reminders, waitlist promotion         */
+/* ================================================================== */
+
+/* Emails render in the recipient's own language (stored on their signup). */
+function fmtDateLang(iso, lang) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString(lang === 'fr' ? 'fr-CA' : 'en-CA',
+    { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function payLineFor(lang, method, total) {
+  const key = method === 'cash' ? 'payLineC' : 'payLineE';
+  return tLang(lang, key, { total: fmtMoney(total), email: state.settings.etransferEmail || '' });
+}
+
+async function sendConfirmationEmail(ev, profile, listIds, method) {
+  const lang = getLang();
+  const allMine = [...new Set([...mySignups(ev.id).map(m => m.listId), ...listIds])];
+  const { total } = computePrice(ev, allMine, method);
+  const lists = allMine.map(id => {
+    const l = listById(ev, id);
+    const sess = l ? sessionById(ev, l.sessionId) : null;
+    return `- ${SPORTS[l?.sport]?.label || ''} ${l?.label || ''} (${sess?.label || ''})`;
+  }).join('\n');
+  const vars = {
+    name: profile.name,
+    date: fmtDateLang(ev.date, lang),
+    lists,
+    payLine: payLineFor(lang, method, total),
+    late: state.settings.lateFeeNote || '',
+    location: ev.location || state.settings.location || '',
+    club: state.settings.clubFullName || 'CRSC',
+  };
+  try {
+    if (store.mode === 'demo' || !mailerConfigured()) {
+      toast(t('confEmailSim', { email: profile.email }));
+      return;
+    }
+    const r = await sendMail({
+      to: profile.email,
+      subject: tLang(lang, 'emailConfSubject', { date: vars.date }),
+      message: tLang(lang, 'emailConfBody', vars),
+    });
+    if (r.sent) toast(t('confEmailSent', { email: profile.email }));
+  } catch (err) {
+    console.error('confirmation email', err);
+    toast(t('confEmailFail'), 'err');
+  }
+}
+
+/*
+ * 24h-before payment reminders. A static site has no scheduler, so this runs
+ * whenever anyone has the app open inside the reminder window; each person's
+ * signups are flagged (claim-first) so nobody is emailed twice.
+ */
+let remindersRunning = false;
+async function runPaymentReminders() {
+  if (remindersRunning) return;
+  remindersRunning = true;
+  try {
+    const live = store.mode !== 'demo' && mailerConfigured();
+    let sent = 0;
+    for (const ev of state.events) {
+      if (!reminderDue(ev)) continue;
+      store.watchEvent(ev.id);
+      const signups = state.signups[ev.id];
+      if (!signups) continue; // not loaded yet; a later pass will handle it
+      // one reminder per person, bundle-aware total
+      const persons = {};
+      for (const su of signups) {
+        if (su.paid || !su.email || su.paymentReminderSentAt) continue;
+        const k = personKey(su);
+        (persons[k] = persons[k] || []).push(su);
+      }
+      for (const sus of Object.values(persons)) {
+        const su = sus[0];
+        const lang = su.lang === 'fr' ? 'fr' : 'en';
+        const { total } = computePrice(ev, sus.map(x => x.listId), su.method);
+        if (live) {
+          // claim before sending so a second open tab can't double-send
+          await Promise.all(sus.map(x => store.updateSignup(ev.id, x.id, { paymentReminderSentAt: Date.now() })));
+          try {
+            await sendMail({
+              to: su.email,
+              subject: tLang(lang, 'emailRemSubject', { date: fmtDateLang(ev.date, lang) }),
+              message: tLang(lang, 'emailRemBody', {
+                name: su.name,
+                date: fmtDateLang(ev.date, lang),
+                total: fmtMoney(total),
+                payLine: payLineFor(lang, su.method, total),
+                late: state.settings.lateFeeNote || '',
+                club: state.settings.clubFullName || 'CRSC',
+              }),
+            });
+            sent++;
+          } catch (err) {
+            console.error('reminder email', err);
+          }
+        } else if (isExec()) {
+          await Promise.all(sus.map(x => store.updateSignup(ev.id, x.id, { paymentReminderSentAt: Date.now() })));
+          sent++;
+        }
+      }
+    }
+    if (sent) toast(t(live ? 'remindersSent' : 'remindersSim', { n: sent }));
+  } finally {
+    remindersRunning = false;
+  }
+}
+
+/* ================================================================== */
 /* Waitlist promotion (automatic, with email)                          */
 /* ================================================================== */
 
@@ -246,25 +356,34 @@ async function notifyPromotion(ev, promo) {
   const { cand, list } = promo;
   const sess = sessionById(ev, list.sessionId);
   try {
-    if (store.mode === 'demo' || !window.EMAILJS_CONFIG) {
+    if (store.mode === 'demo' || !mailerConfigured()) {
       if (cand.email) toast(t('promotedEmailSim', { name: cand.name }));
       else toast(t('promotedNoEmail', { name: cand.name }));
       await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: !!cand.email });
       return;
     }
-    const r = await sendPromotionEmail({
-      signup: cand, event: ev,
-      listLabel: `${SPORTS[list.sport]?.label || list.sport} — ${list.label}`,
-      sessionLabel: sess ? sess.label : '',
-      settings: state.settings,
-    });
-    if (r.sent) {
-      toast(t('promotedEmailSent', { name: cand.name }));
-      await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: true });
-    } else {
+    if (!cand.email) {
       toast(t('promotedNoEmail', { name: cand.name }));
       await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: false });
+      return;
     }
+    const lang = cand.lang === 'fr' ? 'fr' : 'en';
+    const { total } = computePrice(ev, [list.id], cand.method);
+    await sendMail({
+      to: cand.email,
+      subject: tLang(lang, 'emailPromoSubject', { date: fmtDateLang(ev.date, lang) }),
+      message: tLang(lang, 'emailPromoBody', {
+        name: cand.name,
+        date: fmtDateLang(ev.date, lang),
+        list: `${SPORTS[list.sport]?.label || list.sport} — ${list.label}`,
+        session: sess ? sess.label : '',
+        payLine: payLineFor(lang, cand.method, total),
+        location: ev.location || state.settings.location || '',
+        club: state.settings.clubFullName || 'CRSC',
+      }),
+    });
+    toast(t('promotedEmailSent', { name: cand.name }));
+    await store.updateSignup(ev.id, cand.id, { promotedAt: Date.now(), promotedNotified: true });
   } catch (err) {
     console.error('promotion email', err);
     toast(t('promotedEmailFail', { name: cand.name }), 'err');
@@ -845,6 +964,7 @@ function openJoinSheet(ev, preselectedListId) {
       paid: false,
       checkedIn: false,
       team: null,
+      lang: getLang(),
       order: now + i,
       createdAt: now + i,
       addedByExec: false,
@@ -854,6 +974,7 @@ function openJoinSheet(ev, preselectedListId) {
       ov.remove();
       toast(t('onTheList'));
       openPayInfoModal(ev, method);
+      sendConfirmationEmail(ev, np, chosen, method);
     } catch (err) {
       console.error(err);
       toast(t('errGeneric'), 'err');
@@ -1262,6 +1383,8 @@ function openSettingsModal() {
 /* Boot                                                                */
 /* ================================================================== */
 
+let reminderTimer = null;
+
 async function main() {
   document.documentElement.lang = getLang();
   store = await createStore();
@@ -1269,6 +1392,9 @@ async function main() {
   await store.init(newState => {
     state = newState;
     render();
+    // Check for due payment reminders shortly after data settles.
+    clearTimeout(reminderTimer);
+    reminderTimer = setTimeout(runPaymentReminders, 1500);
   });
 }
 

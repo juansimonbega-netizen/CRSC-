@@ -114,6 +114,30 @@ const STRINGS = {
   yourTotal: ['Your total for {date}', 'Votre total pour {date}'],
   waitlistNote: ['Full lists put you on the waitlist — if a spot opens you\'re moved up automatically and emailed.', 'Liste complète = liste d\'attente — si une place se libère, vous montez automatiquement et recevez un courriel.'],
 
+  /* emails (rendered in the recipient's language) */
+  emailConfSubject: ['CRSC — You\'re signed up for {date}', 'CRSC — Inscription confirmée : {date}'],
+  emailConfBody: [
+    'Hey {name}!\n\nYou\'re on the list for {date}:\n{lists}\n\n{payLine}\n{late}\n\nWhere: {location}\n\nCan\'t make it? Please remove your name on the sign-up page so someone on the waitlist can take your spot.\n\n— {club}',
+    'Salut {name}!\n\nVous êtes inscrit pour le {date} :\n{lists}\n\n{payLine}\n{late}\n\nOù : {location}\n\nVous ne pouvez plus venir? Retirez votre nom sur la page d\'inscription pour libérer votre place.\n\n— {club}',
+  ],
+  emailRemSubject: ['CRSC — Payment reminder for {date}', 'CRSC — Rappel de paiement : {date}'],
+  emailRemBody: [
+    'Hey {name}!\n\nYour game is coming up ({date}) and our list shows {total} still unpaid.\n\n{payLine}\n{late}\n\nAlready paid? Then ignore this — an exec will confirm it shortly.\n\n— {club}',
+    'Salut {name}!\n\nVotre partie approche ({date}) et notre liste indique {total} non payé.\n\n{payLine}\n{late}\n\nDéjà payé? Ignorez ce message — un exec le confirmera sous peu.\n\n— {club}',
+  ],
+  emailPromoSubject: ['CRSC — A spot opened up: you\'re in for {date}!', 'CRSC — Une place s\'est libérée : vous jouez le {date}!'],
+  emailPromoBody: [
+    'Hey {name}!\n\nGood news — a spot opened up and you moved off the waitlist. You\'re now confirmed for:\n{list} ({session}) on {date}\n\n{payLine}\n\nWhere: {location}\n\nCan\'t make it? Please remove your name on the sign-up page.\n\n— {club}',
+    'Salut {name}!\n\nBonne nouvelle — une place s\'est libérée et vous quittez la liste d\'attente. Vous êtes confirmé pour :\n{list} ({session}) le {date}\n\n{payLine}\n\nOù : {location}\n\nVous ne pouvez plus venir? Retirez votre nom sur la page d\'inscription.\n\n— {club}',
+  ],
+  payLineE: ['Payment ({total}): send an Interac e-transfer to {email} and put your name in the message.', 'Paiement ({total}) : envoyez un virement Interac à {email} en indiquant votre nom dans le message.'],
+  payLineC: ['Payment ({total}): bring cash and pay an exec at the gym before you play.', 'Paiement ({total}) : apportez du comptant et payez un exec au gymnase avant de jouer.'],
+  confEmailSent: ['Confirmation email sent to {email}', 'Courriel de confirmation envoyé à {email}'],
+  confEmailSim: ['Confirmation email would be sent to {email} (demo)', 'Courriel de confirmation simulé pour {email} (démo)'],
+  confEmailFail: ['Sign-up saved, but the confirmation email failed to send', 'Inscription enregistrée, mais l\'envoi du courriel a échoué'],
+  remindersSent: ['{n} payment reminder(s) emailed', '{n} rappel(s) de paiement envoyé(s)'],
+  remindersSim: ['{n} payment reminder(s) would be emailed (demo)', '{n} rappel(s) de paiement seraient envoyés (démo)'],
+
   /* promotion */
   promotedEmailSent: ['{name} moved off the waitlist — email sent', '{name} a quitté la liste d\'attente — courriel envoyé'],
   promotedEmailSim: ['{name} moved off the waitlist — email would be sent (demo)', '{name} a quitté la liste d\'attente — courriel simulé (démo)'],
@@ -219,9 +243,13 @@ const STRINGS = {
   paymentLine: ['Cash on site, or e-transfer to {email}', 'Comptant sur place ou virement Interac à {email}'],
 };
 
-export function t(key, vars = {}) {
+export function tLang(lang, key, vars = {}) {
   const entry = STRINGS[key];
-  let s = entry ? entry[getLang() === 'fr' ? 1 : 0] : key;
+  let s = entry ? entry[lang === 'fr' ? 1 : 0] : key;
   for (const [k, v] of Object.entries(vars)) s = s.replaceAll('{' + k + '}', v);
   return s;
+}
+
+export function t(key, vars = {}) {
+  return tLang(getLang(), key, vars);
 }

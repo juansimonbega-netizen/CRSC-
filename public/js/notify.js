@@ -1,16 +1,32 @@
 /*
- * Automatic waitlist promotion emails.
+ * Email automation: sign-up confirmations, 24h payment reminders, and
+ * waitlist-promotion notices.
  *
- * The waitlist is positional: the first `cap` people on a list are confirmed,
- * everyone after is waiting. So when someone leaves a list (cancels, is
- * removed, or is moved by an exec), the person sitting at position `cap`
- * crosses into the confirmed group automatically — this module detects that
- * person *before* the removal happens and emails them afterwards.
- *
- * Emails are sent through EmailJS (free tier, no server needed). Configure it
- * in firebase-config.js as window.EMAILJS_CONFIG; without config the
- * promotion still happens and the app just tells the exec no email went out.
+ * Emails are sent FROM THE CLUB'S OWN GMAIL (the same account that receives
+ * the e-transfers) through a tiny Google Apps Script "mailer" attached to
+ * that account — free, no server, ~100 emails/day quota. Setup steps are in
+ * the README; the deployed script's URL + shared secret go into
+ * window.MAILER in firebase-config.js. Without config, everything still
+ * works and the app just says the email was skipped/simulated.
  */
+
+export function mailerConfigured() {
+  const m = (typeof window !== 'undefined' && window.MAILER) || null;
+  return !!(m && m.url);
+}
+
+export async function sendMail({ to, subject, message }) {
+  if (!to) return { sent: false, reason: 'no-email' };
+  if (!mailerConfigured()) return { sent: false, reason: 'not-configured' };
+  // Plain body with no custom headers = a CORS "simple request", which Apps
+  // Script web apps accept without preflight.
+  const res = await fetch(window.MAILER.url, {
+    method: 'POST',
+    body: JSON.stringify({ secret: window.MAILER.secret || '', to, subject, message }),
+  });
+  if (!res.ok) throw new Error('mailer responded ' + res.status);
+  return { sent: true };
+}
 
 /* Who gets promoted if `signup` leaves its list? (Call BEFORE the removal.) */
 export function promotionCandidate(entries, cap, signup) {
@@ -20,30 +36,15 @@ export function promotionCandidate(entries, cap, signup) {
   return entries[cap];                             // first person on the waitlist
 }
 
-export async function sendPromotionEmail({ signup, event, listLabel, sessionLabel, settings }) {
-  const cfg = (typeof window !== 'undefined' && window.EMAILJS_CONFIG) || null;
-  if (!signup.email) return { sent: false, reason: 'no-email' };
-  if (!cfg || !cfg.publicKey) return { sent: false, reason: 'not-configured' };
-
-  const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      service_id: cfg.serviceId,
-      template_id: cfg.templateId,
-      user_id: cfg.publicKey,
-      template_params: {
-        to_email: signup.email,
-        to_name: signup.name,
-        event_date: event.date,
-        list_label: listLabel,
-        session_label: sessionLabel,
-        location: event.location || settings.location || '',
-        etransfer_email: settings.etransferEmail || '',
-        club_name: settings.clubName || 'CRSC',
-      },
-    }),
-  });
-  if (!res.ok) throw new Error('EmailJS responded ' + res.status);
-  return { sent: true };
+/*
+ * Payment reminders go out in the 24 hours before the event (first session
+ * starts around 5:30 PM, so the window opens the evening before) and stay
+ * open through the event day itself.
+ */
+export function reminderDue(ev, now = new Date()) {
+  if (!ev.date || ev.status !== 'open') return false;
+  const eventStart = new Date(ev.date + 'T17:00:00');
+  const windowStart = new Date(eventStart.getTime() - 24 * 3600 * 1000);
+  const windowEnd = new Date(ev.date + 'T23:59:59');
+  return now >= windowStart && now <= windowEnd;
 }
