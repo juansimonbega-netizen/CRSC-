@@ -75,6 +75,18 @@ const STRINGS = {
   lateFee: ['incl. late fee', 'incl. frais de retard'],
   lateFeeAmountLbl: ['Late fee amount ($)', 'Montant des frais de retard ($)'],
 
+  /* removal log (proof trail) */
+  removalsTitle: ['Removed their name ({n})', 'Se sont retirés ({n})'],
+  removedBySelf: ['removed by player', 'retiré par le joueur'],
+  removedByExec: ['removed by exec', 'retiré par un exec'],
+  wasCheckedIn: ['WAS CHECKED IN', 'ÉTAIT PRÉSENT'],
+  stillOwes: ['still owes {amount}', 'doit encore {amount}'],
+  removedAfterStart: ['removed after the game started', 'retiré après le début de la partie'],
+  removalNote: ['Removals are kept as a record. A player who was checked in — or who removed their name after the game started — still owes for that game.', 'Les retraits sont conservés. Un joueur marqué présent — ou retiré après le début de la partie — doit quand même payer.'],
+  removalsCount: ['{n} removal(s)', '{n} retrait(s)'],
+  flaggedRemovals: ['{n} played then removed', '{n} a joué puis retiré'],
+  noRemovals: ['Nobody removed their name.', 'Personne ne s\'est retiré.'],
+
   /* self check-in */
   imHere: ['I\'m here — check in', 'Je suis là — j\'arrive'],
   selfCheckedIn: ['Checked in ✓', 'Présence confirmée ✓'],

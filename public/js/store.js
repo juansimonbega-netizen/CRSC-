@@ -193,6 +193,7 @@ function createDemoStore() {
   state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
   state.players = state.players || {};
   state.payments = state.payments || [];
+  state.removals = state.removals || [];
   let onChange = () => {};
 
   function persist() {
@@ -241,9 +242,14 @@ function createDemoStore() {
     },
     watchPlayers() {},
     watchPayments() {},
+    watchRemovals() {},
     async updatePayment(paymentId, patch) {
       const p = state.payments.find(x => x.id === paymentId);
       if (p) Object.assign(p, patch);
+      persist();
+    },
+    async addRemoval(record) {
+      state.removals.push(record);
       persist();
     },
     resetDemo() {
@@ -264,11 +270,12 @@ async function createFirebaseStore(config) {
   const app = appMod.initializeApp(config);
   const db = fs.getFirestore(app);
 
-  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {}, payments: [] };
+  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {}, payments: [], removals: [] };
   let onChange = () => {};
   const eventWatchers = {}; // eventId -> unsubscribe
   let playersWatcher = null;
   let paymentsWatcher = null;
+  let removalsWatcher = null;
 
   function emit() { onChange(state); }
 
@@ -348,6 +355,17 @@ async function createFirebaseStore(config) {
     },
     async updatePayment(paymentId, patch) {
       await fs.setDoc(fs.doc(db, 'payments', paymentId), patch, { merge: true });
+    },
+    watchRemovals() {
+      if (removalsWatcher) return;
+      removalsWatcher = fs.onSnapshot(fs.collection(db, 'removals'), snap => {
+        state.removals = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        emit();
+      }, err => console.error('removals listener', err));
+    },
+    async addRemoval(record) {
+      const { id, ...data } = record;
+      await fs.setDoc(fs.doc(db, 'removals', id), data);
     },
   };
 }

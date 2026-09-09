@@ -413,6 +413,11 @@ select.input { appearance: auto; }
 .stat-bad strong { color: var(--red); }
 .summary-list { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; max-height: 240px; overflow-y: auto; }
 
+/* removal log */
+.chip-flag { background: var(--red); color: #fff; letter-spacing: 0.03em; }
+.removal-row small { display: block; color: var(--ink-soft); font-size: 11px; }
+.removal-flagged { background: var(--red-soft); border-radius: 5px; padding-left: 8px; padding-right: 8px; }
+
 /* received-payment matcher */
 .pay-match { display: flex; flex-direction: column; gap: 6px; padding: 9px 0; border-bottom: 1px solid #f0e9d9; }
 .pay-match:last-child { border-bottom: none; }

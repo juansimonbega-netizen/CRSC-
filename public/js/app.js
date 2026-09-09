@@ -30,6 +30,14 @@ function fmtDateShort(iso) {
   return d.toLocaleDateString(locale(), { month: 'short', day: 'numeric' });
 }
 
+/* Date + time of an action, e.g. "Sep 12, 8:14 p.m." */
+function fmtStamp(ms) {
+  if (!ms) return '';
+  return new Date(ms).toLocaleString(locale(), {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
 function fmtMoney(n) {
   return (n === Math.floor(n) ? n : n.toFixed(2)) + '$';
 }
@@ -464,8 +472,52 @@ async function notifyPromotion(ev, promo) {
   }
 }
 
-async function removeSignup(ev, su) {
+/*
+ * Removing a name frees the spot, so the signup itself has to go — but a
+ * record of it is kept forever. That record is the proof trail: if someone
+ * signed up, was checked in (or removed their name after the game had
+ * started), and then took their name off the list, the club can still see
+ * they played and ask them to pay.
+ */
+async function logRemoval(ev, su, by) {
+  const l = listById(ev, su.listId);
+  const sess = l ? sessionById(ev, l.sessionId) : null;
+  const covered = coveredSignupIds(ev).has(su.id);
+  const { total } = covered ? { total: 0 } : computePrice(ev, [su.listId], su.method, playerPass(su.deviceId));
+  const now = Date.now();
+  const started = ev.date ? now >= new Date(ev.date + 'T17:00:00').getTime() : false;
+  try {
+    await store.addRemoval({
+      id: uid('rm'),
+      eventId: ev.id,
+      eventDate: ev.date || '',
+      name: su.name,
+      email: su.email || '',
+      phone: su.phone || '',
+      insta: su.insta || '',
+      deviceId: su.deviceId || '',
+      listLabel: l ? l.label : '',
+      sportLabel: l ? (SPORTS[l.sport]?.label || l.sport) : '',
+      sessionLabel: sess ? sess.label : '',
+      signedUpAt: su.createdAt || 0,
+      removedAt: now,
+      by,
+      wasPaid: !!su.paid,
+      wasCheckedIn: !!su.checkedIn,
+      afterStart: started,
+      // Owed only if they never paid and the pass doesn't cover it.
+      amountOwed: su.paid ? 0 : total,
+      // Proof they were there: checked in, or pulled out mid-game.
+      flagged: (!!su.checkedIn || started) && !su.paid && !covered,
+    });
+  } catch (err) {
+    console.error('logRemoval', err);
+  }
+}
+
+async function removeSignup(ev, su, by = 'self') {
   const promo = prePromotion(ev, su);
+  await logRemoval(ev, su, by);
   await store.deleteSignup(ev.id, su.id);
   await notifyPromotion(ev, promo);
 }
@@ -687,6 +739,7 @@ function renderHome() {
     past.slice(0, 12).forEach(e => store.watchEvent(e.id));
     store.watchPlayers();
     store.watchPayments();
+    store.watchRemovals();
   }
 
   $('#view').innerHTML = `
@@ -742,7 +795,13 @@ function renderHome() {
   $('#btn-settings')?.addEventListener('click', openSettingsModal);
   $('#btn-reset-demo')?.addEventListener('click', async () => {
     if (await confirmModal(t('resetDemoConfirm'))) {
-      store.resetDemo(); toast(t('demoReset'));
+      // Also forget this device's profile so the demo replays the
+      // brand-new-visitor flow (registration gate first).
+      try { localStorage.removeItem('crsc-profile'); } catch (e) { /* ignore */ }
+      setExec(false);
+      store.resetDemo();
+      toast(t('demoReset'));
+      render();
     }
   });
 }
@@ -830,7 +889,7 @@ function renderEvent(ev) {
   const mine = mySignups(ev.id);
   const isOpen = isEventOpen(ev);
   const coveredSet = coveredSignupIds(ev);
-  if (exec) store.watchPayments();
+  if (exec) { store.watchPayments(); store.watchRemovals(); }
 
   const sessionsHtml = (ev.sessions || []).map(sess => {
     const lists = (ev.lists || []).filter(l => l.sessionId === sess.id);
@@ -922,7 +981,7 @@ function renderEvent(ev) {
     const su = eventSignups(ev.id).find(x => x.id === b.dataset.cancel);
     if (!su) return;
     if (await confirmModal(t('removeSelfConfirm', { name: su.name }), t('removeMe'))) {
-      await removeSignup(ev, su);
+      await removeSignup(ev, su, 'self');
       toast(t('removedSelf'));
     }
   }));
@@ -1314,7 +1373,7 @@ function openPlayerAdminModal(ev, su) {
   $('#pa-remove', ov).addEventListener('click', async () => {
     ov.remove();
     if (await confirmModal(t('removeConfirm', { name: su.name }), t('remove'))) {
-      await removeSignup(ev, su);
+      await removeSignup(ev, su, 'exec');
       toast(t('removed', { name: su.name }));
     }
   });
@@ -1389,6 +1448,13 @@ function allPlayers() {
       if (!byId[key].photo && su.photo) byId[key].photo = su.photo;
     }
   }
+  // Removal history (the proof trail) follows the player too.
+  for (const r of state.removals || []) {
+    const key = r.deviceId && r.deviceId !== 'exec-added' ? r.deviceId : 'name:' + (r.name || '').toLowerCase();
+    if (!byId[key]) byId[key] = { deviceId: key, name: r.name, insta: r.insta || '', email: r.email || '', phone: r.phone || '', photo: '', games: 0, unpaid: 0 };
+    byId[key].removals = (byId[key].removals || 0) + 1;
+    if (r.flagged) byId[key].flagged = (byId[key].flagged || 0) + 1;
+  }
   return Object.values(byId).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 }
 
@@ -1428,6 +1494,7 @@ function openPlayersModal() {
             ${p.insta ? '@' + esc(p.insta) + ' · ' : ''}${esc(p.email || '')}${p.phone ? ' · ' + esc(p.phone) : ''}
           </small>
         </div>
+        ${p.flagged ? `<span class="chip chip-flag">${esc(t('flaggedRemovals', { n: p.flagged }))}</span>` : (p.removals ? `<span class="chip chip-muted">${esc(t('removalsCount', { n: p.removals }))}</span>` : '')}
         ${p.unpaid ? `<span class="chip chip-unpaid">${esc(t('unpaidCount', { n: p.unpaid }))}</span>` : `<span class="chip ${p.games ? 'chip-mine' : 'chip-muted'}">${esc(p.games ? t('gamesPlayed', { n: p.games }) : t('neverPlayed'))}</span>`}
         ${p.deviceId.startsWith('name:')
           ? (p.battlePass ? `<span class="chip chip-pass">${esc(p.battlePass.toUpperCase())}</span>` : '')
@@ -1444,8 +1511,8 @@ function openPlayersModal() {
   }
   $('#pl-search', ov).addEventListener('input', renderList);
   $('#pl-csv', ov).addEventListener('click', () => {
-    const rows = [['Name', 'Email', 'Phone', 'Instagram', 'Games', 'Unpaid signups']];
-    for (const p of allPlayers()) rows.push([p.name, p.email || '', p.phone || '', p.insta || '', p.games, p.unpaid]);
+    const rows = [['Name', 'Email', 'Phone', 'Instagram', 'Games', 'Unpaid signups', 'Removals', 'Played then removed']];
+    for (const p of allPlayers()) rows.push([p.name, p.email || '', p.phone || '', p.insta || '', p.games, p.unpaid, p.removals || 0, p.flagged || 0]);
     const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -1515,6 +1582,28 @@ function openSummaryModal(ev) {
         <div class="summary-list">
           ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}${p.late ? ` <small>(${esc(t('lateFee'))})</small>` : ''}</span><span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
         </div>` : `<p class="hint">${esc(t('everyonePaid'))}</p>`}
+      ${(() => {
+        const rms = (state.removals || []).filter(r => r.eventId === ev.id)
+          .sort((a, b) => (b.removedAt || 0) - (a.removedAt || 0));
+        if (!rms.length) return '';
+        return `
+        <h3 class="section-sub">${esc(t('removalsTitle', { n: rms.length }))}</h3>
+        <div class="summary-list">
+          ${rms.map(r => `
+            <div class="entry removal-row ${r.flagged ? 'removal-flagged' : ''}">
+              <div class="grow entry-name">
+                <span>${esc(r.name)}${r.flagged ? ` <span class="chip chip-flag">${esc(r.wasCheckedIn ? t('wasCheckedIn') : t('removedAfterStart'))}</span>` : ''}</span>
+                <small>
+                  ${esc(r.sportLabel)} ${esc(r.listLabel)}${r.sessionLabel ? ' · ' + esc(r.sessionLabel) : ''}
+                  · ${esc(fmtStamp(r.removedAt))} · ${esc(r.by === 'exec' ? t('removedByExec') : t('removedBySelf'))}
+                  ${r.email ? ' · ' + esc(r.email) : ''}
+                </small>
+              </div>
+              ${r.flagged && r.amountOwed ? `<span class="chip chip-unpaid">${esc(t('stillOwes', { amount: fmtMoney(r.amountOwed) }))}</span>` : ''}
+            </div>`).join('')}
+        </div>
+        <p class="hint">${esc(t('removalNote'))}</p>`;
+      })()}
       ${paid.length ? `
         <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
         <div class="summary-list">
@@ -1554,6 +1643,12 @@ function exportCsv(ev) {
     const row = (su, status) => [su.name, su.email || '', su.phone || '', su.insta, sess?.label || '', l.label, SPORTS[l.sport]?.label || l.sport, su.team || '', status, su.method, su.paid ? 'yes' : (covered.has(su.id) ? 'BATTLE PASS' : 'NO'), su.checkedIn ? 'yes' : ''];
     for (const su of confirmed) rows.push(row(su, 'confirmed'));
     for (const su of waitlist) rows.push(row(su, 'waitlist'));
+  }
+  // Removed names stay in the export as the proof trail.
+  for (const r of (state.removals || []).filter(x => x.eventId === ev.id)) {
+    rows.push([r.name, r.email || '', r.phone || '', r.insta || '', r.sessionLabel || '', r.listLabel || '', r.sportLabel || '', '',
+      `REMOVED ${r.by === 'exec' ? 'by exec' : 'by player'} ${fmtStamp(r.removedAt)}${r.flagged ? ' — PLAYED, OWES ' + fmtMoney(r.amountOwed) : ''}`,
+      '', r.wasPaid ? 'yes' : 'NO', r.wasCheckedIn ? 'yes' : '']);
   }
   const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv' });

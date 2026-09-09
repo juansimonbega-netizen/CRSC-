@@ -148,6 +148,25 @@ pre-selected: one tap on ✓ marks that player paid, ✕ dismisses unrelated
 transfers. The Payments button shows a count whenever transfers are waiting.
 (The outgoing mailer lives in [`apps-script/mailer.gs`](apps-script/mailer.gs).)
 
+## Removal log (proof trail)
+
+Taking a name off a list frees the spot, so the sign-up itself has to go —
+but a permanent record is kept: who, which list, when, whether it was the
+player or an exec who removed it, and whether they had been **checked in**.
+
+The exec **Payments** screen shows "Removed their name" for each event. A
+removal is flagged in red — **WAS CHECKED IN** (or *removed after the game
+started*) plus **still owes $X** — when the person was marked present, never
+paid, and then came off the list. That is the proof the club needs to still
+ask for payment. The Players directory shows a per-player count ("2 played
+then removed"), and both CSV exports include the removals.
+
+Two protections work together: the cancellation lock stops players from
+removing themselves on game day at all, and the log catches everything else
+(exec removals, early removals by someone who shows up anyway). In Firestore
+the log is append-only — records can be created and read, never edited or
+deleted from the app.
+
 ## Cancellation lock & automatic late fee
 
 - Players cannot remove themselves in the final **24 hours** before a game

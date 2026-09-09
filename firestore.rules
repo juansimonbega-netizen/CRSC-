@@ -43,6 +43,18 @@ service cloud.firestore {
       allow delete: if true;
     }
 
+    // Removal log: append-only proof trail. Anyone can add a record (the
+    // app writes one whenever a name leaves a list) and read it back;
+    // nobody can edit or delete an existing record from the client.
+    match /removals/{removalId} {
+      allow read: if true;
+      allow create: if
+        request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60;
+      allow update, delete: if false;
+    }
+
     match /events/{eventId} {
       allow read: if true;
       allow write: if true;
