@@ -10,6 +10,12 @@ drop-in events (volleyball, basketball, football).
 - **Registration first**: the first time anyone opens the link they create a
   player profile (name + email required; phone, Instagram, photo optional).
   The device remembers them — next visit goes straight to the calendar.
+- **Same profile on every device**: the profile screen has *Use on another
+  device*, which hands out a personal link — open it in another browser or on
+  another phone and it becomes the same player, with the same spots and
+  payments. The welcome screen also offers *I already have a profile*, which
+  finds the player by the email they signed up with (needs the shared
+  database, i.e. live mode).
 - A **season calendar** (every Saturday until the configured season end, e.g. Dec 26): tap a date to sign up. Orange = open, struck-through = full, green ring = your games.
 - One-tap sign-up: first time you enter your **name + email + optional phone/Instagram/photo**; the device remembers you.
 - Pick **one or several lists** (e.g. volleyball in both slots) — the **4h bundle price** applies automatically. Prices are shown once, in one recap line.

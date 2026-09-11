@@ -443,3 +443,12 @@ select.input { appearance: auto; }
 @media (prefers-reduced-motion: reduce) {
   .toast { transition: opacity 0.25s; transform: none; }
 }
+
+/* status chips never squeeze on narrow phones; long names truncate instead */
+.entry .chip { flex: none; white-space: nowrap; }
+.entry-name { overflow: hidden; }
+.entry-name span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-pass-off { background: transparent; border: 1px solid var(--ink); color: var(--ink); }
+
+/* personal transfer link */
+.transfer-link { font-size: 12px; }

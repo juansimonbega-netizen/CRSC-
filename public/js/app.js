@@ -1,5 +1,5 @@
 import {
-  createStore, SPORTS, uid, deviceId, makeTemplateEvent, nextSaturday, saturdaysUntil, localISO,
+  createStore, SPORTS, uid, deviceId, setDeviceId, makeTemplateEvent, nextSaturday, saturdaysUntil, localISO,
 } from './store.js';
 import { t, tLang, getLang, setLang, locale } from './i18n.js';
 import { promotionCandidate, sendMail, mailerConfigured, reminderDue } from './notify.js';
@@ -546,8 +546,128 @@ async function moveSignup(ev, su, newListId) {
 /* Rendering: shell + routing                                          */
 /* ================================================================== */
 
+/* ------------------------------------------------------------------ */
+/* Profile portability                                                  */
+/*                                                                      */
+/* A profile lives in this browser's storage, so opening the app from a */
+/* different browser (or from the Claude artifact versus the real site) */
+/* would otherwise look like a brand new person. Two ways across:       */
+/*  - a personal link that carries the player id and contact details;   */
+/*  - "I already have a profile", which looks the email up in the club  */
+/*    registry (works once the club is on the shared database).         */
+/* ------------------------------------------------------------------ */
+
+function b64urlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlDecode(str) {
+  const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64);
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function profileLink() {
+  const p = getProfile() || {};
+  const payload = b64urlEncode(JSON.stringify({
+    i: DEVICE, n: p.name || '', e: p.email || '', p: p.phone || '', g: p.insta || '',
+  }));
+  return location.href.split('#')[0] + '#/me/' + payload;
+}
+
+/* Take over the identity in a personal link, then reload so everything
+ * derived from the player id is rebuilt. */
+function adoptIdentity(raw) {
+  let d = null;
+  try { d = JSON.parse(b64urlDecode(raw)); } catch (e) { d = null; }
+  if (!d || !d.i) {
+    location.hash = '#/';
+    toast(t('linkBad'), 'err');
+    return;
+  }
+  const old = getProfile();
+  setDeviceId(d.i);
+  saveProfile({
+    name: d.n || '', email: d.e || '', phone: d.p || '', insta: d.g || '',
+    photo: (old && old.photo) || '',
+  });
+  $('#view').innerHTML = `<div class="empty">${esc(t('adopting'))}</div>`;
+  const base = location.href.split('#')[0];
+  location.replace(base + '#/');
+  location.reload();
+}
+
+function findPlayerByEmail(email) {
+  const e = (email || '').trim().toLowerCase();
+  if (!e) return null;
+  return Object.values(state.players || {}).find(p => (p.email || '').toLowerCase() === e) || null;
+}
+
+function openRestoreModal() {
+  const ov = openModal(`
+    <div class="modal-body">
+      <h2>${esc(t('restoreTitle'))}</h2>
+      <p class="hint">${esc(t('restoreHint'))}</p>
+      <input class="input" id="rs-email" type="email" placeholder="${esc(t('emailPh').replace(' *', ''))}" autofocus>
+      <div class="row gap">
+        <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
+        <button class="btn btn-primary grow" id="rs-go">${esc(t('restoreBtn'))}</button>
+      </div>
+    </div>`);
+  const go = () => {
+    const found = findPlayerByEmail($('#rs-email', ov).value);
+    if (!found) { toast(t('restoreNotFound'), 'err'); return; }
+    setDeviceId(found.deviceId);
+    saveProfile({
+      name: found.name || '', email: found.email || '', phone: found.phone || '',
+      insta: found.insta || '', photo: found.photo || '',
+    });
+    toast(t('welcomeBack', { name: found.name || '' }));
+    setTimeout(() => location.reload(), 400);
+  };
+  $('#rs-go', ov).addEventListener('click', go);
+  $('#rs-email', ov).addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  $('#rs-email', ov).focus();
+}
+
+function openTransferModal() {
+  const link = profileLink();
+  const ov = openModal(`
+    <div class="modal-body">
+      <h2>${esc(t('transferTitle'))}</h2>
+      <p class="hint">${esc(t('transferHint'))}</p>
+      <input class="input transfer-link" id="tr-link" value="${esc(link)}" readonly>
+      <div class="row gap">
+        <button class="btn btn-ghost grow" id="tr-copy">${esc(t('copyLink'))}</button>
+        ${navigator.share ? `<button class="btn btn-primary grow" id="tr-share">${esc(t('shareLink'))}</button>` : ''}
+      </div>
+      <p class="hint">${esc(t('photoNotCarried'))}</p>
+      <button class="btn btn-ghost wide" data-close>${esc(t('close'))}</button>
+    </div>`);
+  $('#tr-copy', ov).addEventListener('click', async () => {
+    const input = $('#tr-link', ov);
+    try {
+      await navigator.clipboard.writeText(link);
+      toast(t('copiedToast'));
+    } catch (e) {
+      // Clipboard access is blocked in some embedded views; select instead.
+      input.focus();
+      input.setSelectionRange(0, link.length);
+    }
+  });
+  $('#tr-share', ov)?.addEventListener('click', () => {
+    navigator.share({ title: 'CRSC', url: link }).catch(() => {});
+  });
+}
+
 function route() {
   const hash = location.hash || '#/';
+  const me = hash.match(/^#\/me\/(.+)$/);
+  if (me) return { view: 'adopt', payload: me[1] };
   const m = hash.match(/^#\/event\/([^/]+)/);
   if (m) return { view: 'event', eventId: m[1] };
   return { view: 'home' };
@@ -556,6 +676,7 @@ function route() {
 function render() {
   const r = route();
   renderHeader();
+  if (r.view === 'adopt') { adoptIdentity(r.payload); return; }
   if (!getProfile()) { renderWelcome(); return; }
   if (r.view === 'event') {
     const ev = state.events.find(e => e.id === r.eventId);
@@ -619,8 +740,10 @@ function renderWelcome() {
       ${profileFieldsHtml(null)}
       <p class="hint">${esc(t('welcomePrivacy'))}</p>
       <button class="btn btn-primary wide" id="welcome-save">${esc(t('continueBtn'))}</button>
+      <button class="btn btn-ghost wide" id="welcome-restore">${esc(t('haveProfile'))}</button>
     </div>`;
   wireProfileFields(document, null);
+  $('#welcome-restore').addEventListener('click', openRestoreModal);
   $('#welcome-save').addEventListener('click', () => {
     const np = readProfileFields(document);
     if (!np) return;
@@ -842,15 +965,33 @@ async function openSeason() {
 /* Event view                                                          */
 /* ================================================================== */
 
-/* "Battle Pass 2H" / "Battle Pass 4H" chip. */
-function passChipHtml(type) {
-  return `<span class="chip chip-pass">${esc(t('battlePass'))}${type ? ' ' + esc(String(type).toUpperCase()) : ''}</span>`;
+/* "Battle Pass 2H" / "Battle Pass 4H" chip. `short` fits narrow phone rows. */
+function passChipHtml(type, short = false) {
+  const label = short ? 'PASS' : t('battlePass');
+  return `<span class="chip chip-pass">${esc(label)}${type ? ' ' + esc(String(type).toUpperCase()) : ''}</span>`;
 }
 
-function paymentChip(s, covered = false) {
-  if (covered) return passChipHtml(playerPass(s.deviceId));
+function paymentChip(s, covered = false, short = false) {
+  if (covered) return passChipHtml(playerPass(s.deviceId), short);
   if (s.paid) return `<span class="chip chip-paid">${esc(t('paid'))}</span>`;
   return `<span class="chip chip-unpaid">${esc(s.method === 'cash' ? t('cashUnpaid') : t('etransferUnpaid'))}</span>`;
+}
+
+/*
+ * Status chips at the right of a list row. A Battle Pass is always visible
+ * to execs: filled gold when it covers this spot (nothing to collect), and
+ * outlined when the person holds a pass that does NOT cover this spot (a 2h
+ * pass on their second slot, or another sport) so nobody gets asked twice.
+ */
+function statusChips(s, covered, exec) {
+  const pass = playerPass(s.deviceId);
+  const here = exec && s.checkedIn
+    ? `<span class="chip ${s.paid || covered ? 'chip-in-ok' : 'chip-in-warn'}">${esc(t('here'))}</span>`
+    : '';
+  const passMark = !covered && pass
+    ? `<span class="chip chip-pass-off" title="${esc(t('battlePassLbl'))}">${esc(String(pass).toUpperCase())}</span>`
+    : '';
+  return here + passMark + paymentChip(s, covered, true);
 }
 
 /*
@@ -867,7 +1008,7 @@ function entryRow(ev, s, { waitlistPos = null, exec = false, covered = false } =
         ${s.insta ? `<small>@${esc(s.insta)}</small>` : ''}
       </div>
       ${waitlistPos !== null ? `<span class="chip chip-wl">${esc(t('wlShort', { n: waitlistPos }))}</span>` : ''}
-      ${exec ? `${s.checkedIn ? `<span class="chip ${s.paid || covered ? 'chip-in-ok' : 'chip-in-warn'}">${esc(t('here'))}</span>` : ''}${paymentChip(s, covered)}` : (mine ? paymentChip(s, covered) : '')}
+      ${exec || mine ? statusChips(s, covered, exec) : ''}
       ${mine && !exec && !cancellationLocked(ev) ? `<button class="btn btn-tiny btn-ghost" data-cancel="${esc(s.id)}" title="${esc(t('remove'))}">✕</button>` : ''}
     </div>`;
 }
@@ -1083,12 +1224,14 @@ function openProfileModal() {
       <h2>${esc(t('yourProfile'))}</h2>
       <p class="hint">${esc(t('profileHint'))}</p>
       ${profileFieldsHtml(p)}
+      <button class="btn btn-ghost wide" id="pf-transfer">${esc(t('useOtherDevice'))}</button>
       <div class="row gap">
         <button class="btn btn-ghost grow" data-close>${esc(t('cancel'))}</button>
         <button class="btn btn-primary grow" id="pf-save">${esc(t('save'))}</button>
       </div>
     </div>`);
   wireProfileFields(ov, p);
+  $('#pf-transfer', ov).addEventListener('click', () => { ov.remove(); openTransferModal(); });
   $('#pf-save', ov).addEventListener('click', () => {
     const np = readProfileFields(ov);
     if (!np) return;
@@ -1594,7 +1737,7 @@ function openSummaryModal(ev) {
       ${unpaid.length ? `
         <h3 class="section-sub">${esc(t('notPaidYet', { n: unpaid.length }))}</h3>
         <div class="summary-list">
-          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}${p.late ? ` <small>(${esc(t('lateFee'))})</small>` : ''}</span><span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
+          ${unpaid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}${p.insta ? ` <small>@${esc(p.insta)}</small>` : ''}${p.late ? ` <small>(${esc(t('lateFee'))})</small>` : ''}</span>${p.pass ? `<span class="chip chip-pass-off">${esc(String(p.pass).toUpperCase())}</span>` : ''}<span class="chip chip-unpaid">${esc(p.method === 'cash' ? t('cash') : t('etransfer'))} ${fmtMoney(p.total)}</span></div>`).join('')}
         </div>` : `<p class="hint">${esc(t('everyonePaid'))}</p>`}
       ${(() => {
         const rms = (state.removals || []).filter(r => r.eventId === ev.id)

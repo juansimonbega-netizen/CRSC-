@@ -75,6 +75,23 @@ const STRINGS = {
   lateFee: ['incl. late fee', 'incl. frais de retard'],
   lateFeeAmountLbl: ['Late fee amount ($)', 'Montant des frais de retard ($)'],
 
+  /* profile portability */
+  haveProfile: ['I already have a profile', 'J\'ai d\u00e9j\u00e0 un profil'],
+  restoreTitle: ['Find my profile', 'Retrouver mon profil'],
+  restoreHint: ['Enter the email you signed up with and this device picks up your profile, your spots and your payments.', 'Entrez le courriel utilis\u00e9 lors de votre inscription : cet appareil r\u00e9cup\u00e8re votre profil, vos places et vos paiements.'],
+  restoreBtn: ['Find me', 'Me retrouver'],
+  restoreNotFound: ['No profile found with that email.', 'Aucun profil trouv\u00e9 avec ce courriel.'],
+  welcomeBack: ['Welcome back, {name}!', 'Content de vous revoir, {name}!'],
+  useOtherDevice: ['Use on another device', 'Utiliser sur un autre appareil'],
+  transferTitle: ['Your personal link', 'Votre lien personnel'],
+  transferHint: ['Open this link on your other phone or browser and it becomes the same profile — same spots, same payments. Anyone with this link becomes you, so only send it to yourself.', 'Ouvrez ce lien sur votre autre t\u00e9l\u00e9phone ou navigateur pour garder le m\u00eame profil \u2014 m\u00eames places, m\u00eames paiements. Toute personne ayant ce lien devient vous : envoyez-le seulement \u00e0 vous-m\u00eame.'],
+  copyLink: ['Copy link', 'Copier le lien'],
+  copiedToast: ['Link copied', 'Lien copi\u00e9'],
+  shareLink: ['Share', 'Partager'],
+  adopting: ['Restoring your profile\u2026', 'Restauration de votre profil\u2026'],
+  linkBad: ['That link is not valid.', 'Ce lien n\'est pas valide.'],
+  photoNotCarried: ['Your photo stays on the device it was added on.', 'Votre photo reste sur l\'appareil o\u00f9 elle a \u00e9t\u00e9 ajout\u00e9e.'],
+
   /* removal log (proof trail) */
   removalsTitle: ['Removed their name ({n})', 'Se sont retirés ({n})'],
   removedBySelf: ['removed by player', 'retiré par le joueur'],

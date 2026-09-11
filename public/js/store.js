@@ -56,6 +56,11 @@ export function uid(prefix = '') {
   return prefix + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+/* Adopt an existing player identity (profile transfer / restore). */
+export function setDeviceId(id) {
+  try { localStorage.setItem('crsc-device-id', id); } catch (e) { /* ignore */ }
+}
+
 export function deviceId() {
   let id = null;
   try { id = localStorage.getItem('crsc-device-id'); } catch (e) { /* ignore */ }
