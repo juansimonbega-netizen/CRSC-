@@ -416,14 +416,142 @@ async function createFirebaseStore(config) {
   };
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Artifact store (claude.ai shared database)                          */
+/*                                                                     */
+/* When the page runs as a published Artifact with the `db` capability, */
+/* every viewer reads and writes the same documents, live. Same shape   */
+/* as the Firestore store below, so every exec sees each other's        */
+/* check-ins, payments, passes, team moves and removals immediately.    */
+/* ------------------------------------------------------------------ */
+
+async function createArtifactDbStore() {
+  const api = typeof window !== 'undefined' ? window.claude : null;
+  if (!api || typeof api.use !== 'function') return null;
+  let db = null;
+  try { db = await api.use('db'); } catch (e) { db = null; }
+  if (!db) return null;
+
+  const state = { settings: { ...DEFAULT_SETTINGS }, events: [], signups: {}, players: {}, payments: [], removals: [] };
+  let onChange = () => {};
+  const eventWatchers = {};
+  let playersWatcher = null, paymentsWatcher = null, removalsWatcher = null;
+  const emit = () => onChange(state);
+  const onErr = where => e => console.error('db ' + where, e);
+
+  /* `update` requires the document to exist; fall back to a full write. */
+  async function mergeWrite(ref, patch) {
+    try {
+      await ref.update(patch);
+    } catch (e) {
+      if (e && e.code === 'invalid_argument') await ref.set(patch);
+      else throw e;
+    }
+  }
+
+  return {
+    mode: 'live',
+    backend: 'artifact',
+    async init(cb) {
+      onChange = cb;
+      db.doc('config/main').onSnapshot(snap => {
+        state.settings = { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+        emit();
+      }, onErr('settings'));
+      db.collection('events').onSnapshot(snap => {
+        state.events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        state.events.sort((a, b) => (a.date < b.date ? 1 : -1));
+        emit();
+      }, onErr('events'));
+      emit();
+    },
+    watchEvent(eventId) {
+      if (eventWatchers[eventId]) return;
+      eventWatchers[eventId] = db.collection('events/' + eventId + '/signups').onSnapshot(snap => {
+        state.signups[eventId] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        emit();
+      }, onErr('signups'));
+    },
+    unwatchEvent(eventId) {
+      if (eventWatchers[eventId]) { eventWatchers[eventId](); delete eventWatchers[eventId]; }
+    },
+    watchPlayers() {
+      if (playersWatcher) return;
+      playersWatcher = db.collection('players').onSnapshot(snap => {
+        state.players = {};
+        for (const d of snap.docs) state.players[d.id] = { deviceId: d.id, ...d.data() };
+        emit();
+      }, onErr('players'));
+    },
+    watchPayments() {
+      if (paymentsWatcher) return;
+      paymentsWatcher = db.collection('payments').onSnapshot(snap => {
+        state.payments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        state.payments.sort((a, b) => (b.receivedAt || 0) - (a.receivedAt || 0));
+        emit();
+      }, onErr('payments'));
+    },
+    watchRemovals() {
+      if (removalsWatcher) return;
+      removalsWatcher = db.collection('removals').onSnapshot(snap => {
+        state.removals = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        emit();
+      }, onErr('removals'));
+    },
+    async saveSettings(patch) {
+      await mergeWrite(db.doc('config/main'), patch);
+    },
+    async saveEvent(event) {
+      const { id, ...data } = event;
+      await db.doc('events/' + id).set(data);
+    },
+    async deleteEvent(eventId) {
+      const snap = await db.collection('events/' + eventId + '/signups').get();
+      await Promise.all(snap.docs.map(d => db.doc('events/' + eventId + '/signups/' + d.id).delete()));
+      await db.doc('events/' + eventId).delete();
+    },
+    async addSignups(eventId, signups) {
+      await Promise.all(signups.map(su => {
+        const { id, ...data } = su;
+        return db.doc('events/' + eventId + '/signups/' + id).set(data);
+      }));
+    },
+    async updateSignup(eventId, signupId, patch) {
+      await mergeWrite(db.doc('events/' + eventId + '/signups/' + signupId), patch);
+    },
+    async deleteSignup(eventId, signupId) {
+      await db.doc('events/' + eventId + '/signups/' + signupId).delete();
+    },
+    async savePlayer(player) {
+      const { deviceId, ...data } = player;
+      await mergeWrite(db.doc('players/' + deviceId), data);
+    },
+    async updatePayment(paymentId, patch) {
+      await mergeWrite(db.doc('payments/' + paymentId), patch);
+    },
+    async addRemoval(record) {
+      const { id, ...data } = record;
+      await db.doc('removals/' + id).set(data);
+    },
+  };
+}
+
 export async function createStore() {
   const cfg = (typeof window !== 'undefined' && window.FIREBASE_CONFIG) || null;
   if (cfg && cfg.apiKey) {
     try {
       return await createFirebaseStore(cfg);
     } catch (err) {
-      console.error('Firebase unavailable, falling back to demo mode:', err);
+      console.error('Firebase unavailable, falling back:', err);
     }
+  }
+  // Published as a claude.ai Artifact: one shared database for every viewer.
+  try {
+    const shared = await createArtifactDbStore();
+    if (shared) return shared;
+  } catch (err) {
+    console.error('Artifact database unavailable, falling back:', err);
   }
   return createDemoStore();
 }
