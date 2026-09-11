@@ -124,63 +124,104 @@ export function saturdaysUntil(endDate) {
 /* Demo store (localStorage)                                          */
 /* ------------------------------------------------------------------ */
 
-const DEMO_KEY = 'crsc-demo-v6';
+const DEMO_KEY = 'crsc-demo-v7';
+
+/*
+ * Real line-up for the September 12 event, transcribed from the club's
+ * Google Sheet so execs can test check-in and payment marking with the
+ * actual roster. Slot-2 volleyball merges the sheet's two "court" columns
+ * into one Advanced and one Advanced + list, as the club asked.
+ */
+const SEPT12_LISTS = [
+  { sessionId: 's1', sport: 'basketball', label: 'Mixed', cap: 12, priceE: 10, priceC: 10,
+    names: ['Essma', 'Maya Marshel', 'Christina', 'Hela', 'Fairouz'] },
+  { sessionId: 's1', sport: 'basketball', label: 'Men', cap: 12, priceE: 10, priceC: 10,
+    names: ['Rayan', 'mo', 'Nathanael', 'Huy', 'Malik', 'Houssam', 'Alexandre', 'Arthur', 'Mattis', 'Simon-Pierre'] },
+  { sessionId: 's1', sport: 'football', label: '5v5', cap: 13, priceE: 10, priceC: 10,
+    names: ['Siavash Shahbazi', 'Sepehr Seifpour', 'Soroush Seifpour', 'Omar el akrae', 'Jaberty',
+            'Saad Achaou', 'Lokmene Almouba', 'Omar', 'Mohamed', 'Jad', 'Hussein', 'Omar (2)', 'Abdeltif'],
+    wait: ['Ibram'] },
+  { sessionId: 's1', sport: 'volleyball', label: 'Advanced +', cap: 21, priceE: 8, priceC: 10, teamCount: 4,
+    names: ['Giulio', 'Juansi', 'Minhtu', 'Cami', 'Ayman', 'Theo', 'Fred', 'Michael F', 'Vicky', 'Yu chen',
+            'Kai', 'Colby', 'Sarah', 'Mohammed E', 'Milo', 'Hyun', 'Ben', 'Dodam', 'Lorys', 'Paul', 'Ishak'],
+    wait: ['Adel', 'Nassim', 'Rubens', 'Alejandro', 'Camille', 'Mathias'] },
+  { sessionId: 's1', sport: 'volleyball', label: 'Advanced', cap: 21, priceE: 8, priceC: 10, teamCount: 4,
+    names: ['Heejin', 'Anthony', 'Deniz', 'Maura', 'Jason', 'Rohan', 'Wissame', 'Nesrine', 'William', 'Fernando',
+            'Denis', 'Amine', 'Kerby', 'Jia', 'Jaeden', 'Aarif', 'isaiah', 'Arvic', 'wacim', 'Ameena', 'Yomna'],
+    wait: ['Ines', 'Clément C', 'Siomara', 'Viviana', 'jeet', 'Alexi'] },
+  { sessionId: 's2', sport: 'volleyball', label: 'Advanced', cap: 41, priceE: 8, priceC: 10, teamCount: 4,
+    names: ['Kevin', 'Raul', 'Ben', 'Anaïs', 'Rishit', 'Daiwei', 'Jaeden', 'Heejin', 'Anthony', 'Bea',
+            'Deniz', 'Arvic', 'Rohan', 'Wissame', 'Nesrine', 'William', 'Ines', 'Haig', 'Ida', 'Selim',
+            'Ben F', 'Jason', 'isaiah', 'Jennifer Z', 'Gabs', 'frédérique', 'ana', 'Fernando', 'Denis', 'Amine',
+            'Kerby', 'Jia', 'Amy', 'wacim', 'Benito', 'Camila', 'Tyrel', 'Mohammad a', 'Mahmoud a',
+            'Faris', 'Alya'],
+    wait: ['Ehsan', 'Neil G', 'Glob', 'Célia D', 'Gab C', 'Max', 'Alexa DV'] },
+  { sessionId: 's2', sport: 'volleyball', label: 'Advanced +', cap: 40, priceE: 8, priceC: 10, teamCount: 4,
+    names: ['Romain', 'Fred', 'Michael F', 'Vicky', 'Cami', 'Aidan', 'Clement C', 'Kanghee', 'Yuan',
+            'Micheal khoo', 'Colby', 'Kai', 'Nassim', 'Rubens', 'Alejandro', 'Camille', 'Milo', 'Ben',
+            'Arthur', 'Sarah', 'Top', 'Ayman', 'Yu Chen', 'Theo', 'mo', 'Lorys', 'Nathanael', 'Mohammed E',
+            'Etienne', 'Alexis', 'Hyun', 'Dodam', 'Keon', 'Ishak', 'Paul', 'Rayan', 'Giulio', 'Juansi',
+            'Minhtu', 'Adel'] },
+];
+
+/* Paid by e-transfer (green checks on the bundle payment sheet). Their
+ * volleyball spots start marked paid; other sports stay unpaid. */
+const SEPT12_PAID = ['Etienne', 'Alexis', 'Top', 'Arthur', 'Hyun', 'Heejin', 'Ines'];
+
+function playerId(name) {
+  return 'p-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
 
 function demoSeed() {
   const players = {};
-  const seedSignups = (ev, listIdx, names, { paid = false, teamed = false } = {}) => names.map(([name, insta], i) => {
-    const deviceId = 'demo-' + name.toLowerCase().replace(/\s+/g, '-');
-    const email = name.toLowerCase().replace(/\s+/g, '.') + '@example.com';
-    players[deviceId] = { deviceId, name, insta, email, phone: '', photo: '', lang: 'en', lastSeen: Date.now() };
-    return {
-      id: uid('su'),
-      listId: ev.lists[listIdx].id,
-      name, insta,
-      email,
-      phone: '',
-      photo: '',
-      deviceId,
-      method: i % 2 ? 'cash' : 'etransfer',
-      paid: paid || i < 2,
-      checkedIn: paid,
-      team: teamed ? (i % 2) + 1 : null,
-      order: Date.now() + i,
-      createdAt: Date.now() + i,
-      addedByExec: false,
-    };
-  });
+  const base = Date.now();
+  let seq = 0;
 
-  // A whole season of Saturdays to pick from, plus last week as a record.
+  // The whole season is open; September 12 carries the real roster.
   const season = saturdaysUntil(DEFAULT_SETTINGS.seasonEnd).slice(0, 16)
     .map(d => makeTemplateEvent(d, 'Saturday Drop-in'));
-  const past = makeTemplateEvent(nextSaturday(-1), 'Saturday Drop-in');
-  past.status = 'closed';
-
-  const signups = { [past.id]: seedSignups(past, 3, [
-    ['Giulio', ''], ['Heejin', ''], ['Anthony', ''], ['Cami', ''], ['Deniz', ''],
-  ], { paid: true, teamed: true }) };
+  const signups = {};
   for (const ev of season) signups[ev.id] = [];
-  signups[season[0].id] = seedSignups(season[0], 3, [
-    ['Essma', 'essma.mtl'], ['Rayan', ''], ['Maya', 'maya.mrshl'], ['Huy', ''],
-  ], { teamed: true });
-  // Sample Battle Pass holders so the tag is visible in the demo.
-  if (players['demo-rayan']) players['demo-rayan'].battlePass = '4h';
-  if (players['demo-maya']) players['demo-maya'].battlePass = '2h';
 
-  // Leave one past signup unpaid so the automatic late fee is visible,
-  // and seed sample "received e-transfer" rows for the matcher UI.
-  const pastSus = signups[past.id];
-  if (pastSus[4]) { pastSus[4].paid = false; pastSus[4].checkedIn = false; }
+  const first = season[0];
+  first.lists = [];
+  const roster = [];
+  for (const spec of SEPT12_LISTS) {
+    const list = {
+      id: uid('l'), sessionId: spec.sessionId, sport: spec.sport, label: spec.label,
+      cap: spec.cap, priceE: spec.priceE, priceC: spec.priceC, teamCount: spec.teamCount || 0,
+    };
+    first.lists.push(list);
+    for (const name of [...spec.names, ...(spec.wait || [])]) {
+      const deviceId = playerId(name);
+      if (!players[deviceId]) {
+        players[deviceId] = { deviceId, name, insta: '', email: '', phone: '', photo: '', lang: 'en', lastSeen: base };
+      }
+      roster.push({
+        id: uid('su'),
+        listId: list.id,
+        name, insta: '', email: '', phone: '', photo: '',
+        deviceId,
+        method: 'etransfer',
+        paid: spec.sport === 'volleyball' && SEPT12_PAID.includes(name),
+        checkedIn: false,
+        team: null,
+        order: base + seq,
+        createdAt: base + seq,
+        addedByExec: true,
+      });
+      seq++;
+    }
+  }
+  signups[first.id] = roster;
 
   return {
     settings: { ...DEFAULT_SETTINGS },
-    events: [past, ...season],
+    events: season,
     signups,
     players,
-    payments: [
-      { id: 'demo-pay-1', sender: 'HUY NGUYEN', amount: 10, receivedAt: Date.now() - 3600000, matched: false },
-      { id: 'demo-pay-2', sender: 'SOMEONE ELSE', amount: 8, receivedAt: Date.now() - 7200000, matched: false },
-    ],
+    payments: [],
+    removals: [],
   };
 }
 

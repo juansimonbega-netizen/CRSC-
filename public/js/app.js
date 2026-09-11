@@ -290,13 +290,22 @@ function personTotals(ev) {
   }
   return Object.values(persons).map(p => {
     const pass = playerPass(p.deviceId);
-    let { total } = computePrice(ev, p.signups.map(x => x.listId), p.method, pass);
-    const paid = p.signups.every(x => x.paid || covered.has(x.id));
+    // Money is owed per spot, so split the person's spots into what is
+    // settled (paid, or covered by their pass) and what is still owed.
+    // Someone who paid for volleyball but also signed up for basketball
+    // owes the basketball price only — never the whole evening again.
+    // The pass is already accounted for by coveredSignupIds, so the
+    // remaining spots are priced without it.
+    const settled = p.signups.filter(x => x.paid && !covered.has(x.id));
+    const owing = p.signups.filter(x => !x.paid && !covered.has(x.id));
+    const { total: paidAmount } = computePrice(ev, settled.map(x => x.listId), p.method, null);
+    let { total } = computePrice(ev, owing.map(x => x.listId), p.method, null);
+    const paid = owing.length === 0;
     // Automatic late fee once the Saturday has passed and they still owe.
     const late = isPastEvent(ev) && !paid && total > 0;
     if (late) total += parseFloat(state.settings.lateFeeAmount) || 0;
     return {
-      ...p, total, pass, late, paid,
+      ...p, total, paidAmount, pass, late, paid,
       checkedIn: p.signups.some(x => x.checkedIn),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
@@ -359,6 +368,7 @@ async function sendConfirmationEmail(ev, profile, listIds, method) {
  * signups are flagged (claim-first) so nobody is emailed twice.
  */
 let remindersRunning = false;
+let remindersSimulated = false;
 async function runPaymentReminders() {
   if (remindersRunning) return;
   remindersRunning = true;
@@ -403,13 +413,17 @@ async function runPaymentReminders() {
           } catch (err) {
             console.error('reminder email', err);
           }
-        } else if (isExec()) {
-          await Promise.all(sus.map(x => store.updateSignup(ev.id, x.id, { paymentReminderSentAt: Date.now() })));
+        } else if (isExec() && !remindersSimulated) {
+          // Demo mode: count only. Writing a flag per person would mean a
+          // store write and a re-render for every unpaid player.
           sent++;
         }
       }
     }
-    if (sent) toast(t(live ? 'remindersSent' : 'remindersSim', { n: sent }));
+    if (sent) {
+      if (!live) remindersSimulated = true;
+      toast(t(live ? 'remindersSent' : 'remindersSim', { n: sent }));
+    }
   } finally {
     remindersRunning = false;
   }
@@ -717,7 +731,7 @@ function myGamesHtml() {
 
 function weekRecordCard(ev) {
   const people = personTotals(ev);
-  const collected = people.filter(p => p.paid).reduce((a, p) => a + p.total, 0);
+  const collected = people.reduce((a, p) => a + (p.paidAmount || 0), 0);
   const outstanding = people.filter(p => !p.paid).reduce((a, p) => a + p.total, 0);
   return `
     <a class="record-row" href="#/event/${esc(ev.id)}">
@@ -1544,7 +1558,7 @@ function openSummaryModal(ev) {
   const people = personTotals(ev);
   const paid = people.filter(p => p.paid);
   const unpaid = people.filter(p => !p.paid);
-  const collected = paid.reduce((a, p) => a + p.total, 0);
+  const collected = people.reduce((a, p) => a + (p.paidAmount || 0), 0);
   const outstanding = unpaid.reduce((a, p) => a + p.total, 0);
   const pays = (state.payments || []).filter(p => !p.matched);
   const ov = openModal(`
@@ -1607,7 +1621,7 @@ function openSummaryModal(ev) {
       ${paid.length ? `
         <h3 class="section-sub">${esc(t('paidList', { n: paid.length }))}</h3>
         <div class="summary-list">
-          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span>${p.pass && p.total === 0 ? passChipHtml(p.pass) : `<span class="chip chip-paid">${fmtMoney(p.total)} ✓</span>`}</div>`).join('')}
+          ${paid.map(p => `<div class="entry"><span class="grow">${esc(p.name)}</span>${p.pass && !p.paidAmount ? passChipHtml(p.pass) : `<span class="chip chip-paid">${fmtMoney(p.paidAmount || 0)} ✓</span>`}</div>`).join('')}
         </div>` : ''}
       <button class="btn btn-primary wide" data-close>${esc(t('close'))}</button>
     </div>`, { wide: true });
