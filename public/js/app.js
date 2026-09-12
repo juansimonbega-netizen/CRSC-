@@ -165,8 +165,29 @@ function isPastEvent(ev) {
   return !!ev.date && ev.date < todayStr();
 }
 
+/*
+ * Registration opens on a rolling weekly window: a Saturday becomes
+ * signable on the Sunday before it (6 days ahead by default), so only the
+ * coming Saturday takes sign-ups while later ones sit on the calendar as
+ * "opens later". An exec can open any date early from the event page.
+ */
+function eventOpensAt(ev) {
+  if (!ev.date) return 0;
+  const days = parseFloat(state.settings.signupOpenDaysBefore);
+  const ahead = isNaN(days) ? 6 : days;
+  const d = new Date(ev.date + 'T00:00:00');
+  d.setDate(d.getDate() - ahead);
+  return d.getTime();
+}
+
+/* A future event whose sign-up window has not started yet. */
+function isScheduled(ev) {
+  if (ev.status !== 'open' || isPastEvent(ev) || ev.openEarly) return false;
+  return Date.now() < eventOpensAt(ev);
+}
+
 function isEventOpen(ev) {
-  return ev.status === 'open' && !isPastEvent(ev);
+  return ev.status === 'open' && !isPastEvent(ev) && !isScheduled(ev);
 }
 
 /*
@@ -761,6 +782,7 @@ function renderWelcome() {
 function calDayState(ev) {
   if (isPastEvent(ev)) return 'past';
   if (ev.status !== 'open') return 'closed';
+  if (isScheduled(ev)) return 'scheduled';
   const anySpace = (ev.lists || []).some(l => listEntries(ev.id, l.id).length < (l.cap || 0));
   return anySpace ? 'open' : 'full';
 }
@@ -817,6 +839,7 @@ function renderCalendar() {
     <div class="cal-months">${monthsHtml}</div>
     <div class="cal-legend">
       <span><i class="dot dot-open"></i>${esc(t('legendOpen'))}</span>
+      <span><i class="dot dot-scheduled"></i>${esc(t('legendScheduled'))}</span>
       <span><i class="dot dot-full"></i>${esc(t('legendFull'))}</span>
       <span><i class="dot dot-mine"></i>${esc(t('legendMine'))}</span>
     </div>`;
@@ -871,7 +894,8 @@ function renderHome() {
   const profile = getProfile();
   const upcoming = state.events.filter(e => !isPastEvent(e));
   const past = state.events.filter(isPastEvent).sort((a, b) => (a.date < b.date ? 1 : -1));
-  upcoming.forEach(e => store.watchEvent(e.id));
+  // Scheduled weeks have no sign-ups yet, so there is nothing to watch.
+  upcoming.filter(e => !isScheduled(e)).forEach(e => store.watchEvent(e.id));
   if (exec) {
     past.slice(0, 12).forEach(e => store.watchEvent(e.id));
     store.watchPlayers();
@@ -896,7 +920,7 @@ function renderHome() {
       </div>` : ''}
 
     <h2 class="section-title">${esc(t('chooseSaturday'))}</h2>
-    <p class="hint">${esc(t('calendarHint', { end: fmtDate(s.seasonEnd || '') }))}</p>
+    <p class="hint">${esc(t('calendarHint', { end: fmtDate(s.seasonEnd || '') }))} ${esc(t('weeklyRule'))}</p>
     ${upcoming.length
       ? renderCalendar()
       : `<div class="empty">${t('noEvents', { insta: `<a href="https://instagram.com/${esc(s.instagram || '')}" target="_blank" rel="noopener">@${esc(s.instagram || '')}</a>` })}</div>`}
@@ -1100,7 +1124,7 @@ function renderEvent(ev) {
           <div class="event-sub">${esc(ev.location || s.location || '')}</div>
           <div class="event-prices">${pricesSummary(ev)}</div>
         </div>
-        ${!isOpen ? `<span class="chip chip-muted">${esc(isPastEvent(ev) ? t('pastEvent') : t('closed'))}</span>` : ''}
+        ${!isOpen ? `<span class="chip ${isScheduled(ev) ? 'chip-wl' : 'chip-muted'}">${esc(isScheduled(ev) ? t('opensOn', { date: fmtDateShort(localISO(new Date(eventOpensAt(ev)))) }) : (isPastEvent(ev) ? t('pastEvent') : t('closed')))}</span>` : ''}
       </div>
       ${mine.length ? `
         <div class="my-spots">
@@ -1116,8 +1140,10 @@ function renderEvent(ev) {
             : `<button class="btn btn-small btn-success" id="btn-self-in">${esc(t('imHere'))}</button>`) : ''}
         </div>
         ${!exec && isOpen && cancellationLocked(ev) ? `<p class="hint">${esc(t('cancelLocked'))}</p>` : ''}` : ''}
+      ${isScheduled(ev) ? `<p class="hint scheduled-note">${esc(t('notOpenYet', { date: fmtDate(localISO(new Date(eventOpensAt(ev)))) }))}</p>` : ''}
       ${exec ? `
         <div class="row gap wrap exec-toolbar">
+          ${isScheduled(ev) ? `<button class="btn btn-small btn-primary" id="btn-open-now">${esc(t('openNow'))}</button>` : ''}
           <button class="btn btn-small btn-ghost" id="btn-edit-event">${esc(t('editEvent'))}</button>
           <button class="btn btn-small ${(state.payments || []).some(p => !p.matched) ? 'btn-warn' : 'btn-ghost'}" id="btn-summary">${esc(t('payments'))}${(state.payments || []).filter(p => !p.matched).length ? ` · ${(state.payments || []).filter(p => !p.matched).length}` : ''}</button>
           <button class="btn btn-small btn-ghost" id="btn-csv">${esc(t('exportCsv'))}</button>
@@ -1161,6 +1187,10 @@ function renderEvent(ev) {
       const lists = ev.lists.map(l => l.id === sel.dataset.teams ? { ...l, teamCount: +sel.value } : l);
       await store.saveEvent({ ...ev, lists });
     }));
+    $('#btn-open-now')?.addEventListener('click', async () => {
+      await store.saveEvent({ ...ev, openEarly: true });
+      toast(t('openedNow'));
+    });
     $('#btn-edit-event')?.addEventListener('click', () => openEventEditor(ev));
     $('#btn-summary')?.addEventListener('click', () => openSummaryModal(ev));
     $('#btn-csv')?.addEventListener('click', () => exportCsv(ev));
@@ -1966,6 +1996,8 @@ function openSettingsModal() {
         <input class="input" id="cs-latefee" value="${esc(s.lateFeeNote || '')}">
         <label class="field-label">${esc(t('lateFeeAmountLbl'))}</label>
         <input class="input input-num" id="cs-latefeeamt" type="number" min="0" step="1" value="${esc(s.lateFeeAmount ?? 5)}">
+        <label class="field-label">${esc(t('signupOpenLbl'))}</label>
+        <input class="input input-num" id="cs-openahead" type="number" min="0" step="1" value="${esc(s.signupOpenDaysBefore ?? 6)}">
         <label class="field-label">${esc(t('battlePassNoteLbl'))}</label>
         <textarea class="input" id="cs-bpnote" rows="3">${esc(s.battlePassNote || '')}</textarea>
         <label class="field-label">${esc(t('policiesLbl'))}</label>
@@ -1985,6 +2017,7 @@ function openSettingsModal() {
       seasonEnd: $('#cs-season', ov).value || s.seasonEnd || '',
       lateFeeNote: $('#cs-latefee', ov).value.trim(),
       lateFeeAmount: parseFloat($('#cs-latefeeamt', ov).value) || 0,
+      signupOpenDaysBefore: parseFloat($('#cs-openahead', ov).value) || 0,
       battlePassNote: $('#cs-bpnote', ov).value.trim(),
       policies: $('#cs-policies', ov).value.split('\n').map(x => x.trim()).filter(Boolean),
     });

@@ -452,3 +452,10 @@ select.input { appearance: auto; }
 
 /* personal transfer link */
 .transfer-link { font-size: 12px; }
+
+/* a Saturday whose sign-up window has not started yet */
+.cal-sat.is-scheduled { background: transparent; color: var(--ink); border-color: var(--orange); border-style: dashed; }
+.dot-scheduled { background: transparent; border: 1px dashed var(--orange); }
+.scheduled-note { margin-top: 10px; }
+/* status chips in the event header must not stretch to the row's height */
+.event-head .chip { align-self: flex-start; }

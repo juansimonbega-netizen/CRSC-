@@ -16,7 +16,11 @@ drop-in events (volleyball, basketball, football).
   payments. The welcome screen also offers *I already have a profile*, which
   finds the player by the email they signed up with (needs the shared
   database, i.e. live mode).
-- A **season calendar** (every Saturday until the configured season end, e.g. Dec 26): tap a date to sign up. Orange = open, struck-through = full, green ring = your games.
+- A **season calendar** (every Saturday until the configured season end, e.g. Dec 26): tap a date to sign up. Orange = open, dashed = opens later, struck-through = full, green ring = your games.
+- **One Saturday at a time**: a game opens for sign-ups on the **Sunday before**
+  it (the `signupOpenDaysBefore` setting, default 6 days). Later Saturdays are
+  visible on the calendar as "opens later" with their opening date, so nobody
+  books a month ahead. Execs can open any date early from its page.
 - One-tap sign-up: first time you enter your **name + email + optional phone/Instagram/photo**; the device remembers you.
 - Pick **one or several lists** (e.g. volleyball in both slots) — the **4h bundle price** applies automatically. Prices are shown once, in one recap line.
 - Choose **e-transfer or cash**, and see exactly how much to send and to which email.

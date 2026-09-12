@@ -75,6 +75,15 @@ const STRINGS = {
   lateFee: ['incl. late fee', 'incl. frais de retard'],
   lateFeeAmountLbl: ['Late fee amount ($)', 'Montant des frais de retard ($)'],
 
+  /* rolling weekly opening */
+  weeklyRule: ['Each Saturday opens for sign-ups on the Sunday before.', 'Chaque samedi ouvre aux inscriptions le dimanche pr\u00e9c\u00e9dent.'],
+  legendScheduled: ['opens later', 'ouvre plus tard'],
+  opensOn: ['Opens {date}', 'Ouvre le {date}'],
+  notOpenYet: ['Sign-ups for this Saturday open on {date}.', 'Les inscriptions pour ce samedi ouvrent le {date}.'],
+  openNow: ['Open sign-ups now', 'Ouvrir les inscriptions'],
+  openedNow: ['Sign-ups opened', 'Inscriptions ouvertes'],
+  signupOpenLbl: ['Sign-ups open this many days before the event', 'Ouverture des inscriptions (jours avant l\'\u00e9v\u00e9nement)'],
+
   /* profile portability */
   haveProfile: ['I already have a profile', 'J\'ai d\u00e9j\u00e0 un profil'],
   restoreTitle: ['Find my profile', 'Retrouver mon profil'],

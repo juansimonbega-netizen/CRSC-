@@ -32,6 +32,9 @@ export const DEFAULT_SETTINGS = {
   lateFeeNote: '+5$ late fee if payment is made after the event',
   lateFeeAmount: 5,
   cancelLockHours: 24,
+  // Registration opens this many days before the event: 6 = the Sunday
+  // before a Saturday game, so exactly one Saturday is open at a time.
+  signupOpenDaysBefore: 6,
   battlePassNote: 'Volleyball season pass — 4h (both slots) 135$ instead of 165$ · 2h 75$ instead of 88$. E-transfer the club and an exec activates it on your profile.',
   policies: [
     'For e-Transfer make sure to mention the name of the person(s) you are paying for.',
