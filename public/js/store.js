@@ -110,9 +110,11 @@ export function localISO(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/* The coming Saturday — and on a Saturday, TODAY. A drop-in game stays the
+ * current one all through its own day, so game-day check-in still finds it. */
 export function nextSaturday(offsetWeeks = 0) {
   const d = new Date();
-  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7) + offsetWeeks * 7);
+  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7) + offsetWeeks * 7);
   return localISO(d);
 }
 

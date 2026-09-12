@@ -904,6 +904,7 @@ function renderHome() {
   }
 
   $('#view').innerHTML = `
+    ${store.mode === 'demo' ? `<div class="offline-banner">${esc(t('offlineBanner'))}</div>` : ''}
     <section class="hero">
       <h1>${esc(t('heroTitle'))}</h1>
       <p>${esc(t('tagline'))}</p>
@@ -2034,6 +2035,9 @@ let reminderTimer = null;
 
 async function main() {
   document.documentElement.lang = getLang();
+  // Reaching the shared database can take a few seconds on a phone; never
+  // leave the screen blank while it happens.
+  $('#view').innerHTML = `<div class="empty">${esc(t('connecting'))}</div>`;
   store = await createStore();
   window.addEventListener('hashchange', render);
   const existing = getProfile();

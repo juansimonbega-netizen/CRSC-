@@ -459,3 +459,11 @@ select.input { appearance: auto; }
 .scheduled-note { margin-top: 10px; }
 /* status chips in the event header must not stretch to the row's height */
 .event-head .chip { align-self: flex-start; }
+
+/* device is not on the shared list */
+.offline-banner {
+  background: var(--red-soft); color: var(--red);
+  border: 2px solid var(--red); border-radius: var(--radius);
+  padding: 10px 12px; margin-top: 12px;
+  font-size: 13px; font-weight: 700;
+}
